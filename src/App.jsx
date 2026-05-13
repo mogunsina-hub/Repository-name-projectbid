@@ -1,51 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 
-const initialProjects = [
-  {
-    id: 1,
-    title: "Luxury Basement Renovation",
-    owner: "Parksville Homeowner",
-    location: "Parksville, BC",
-    budget: "$35,000 - $55,000",
-    category: "Renovation",
-    description: "Create a modern basement suite with a theatre area, gym, and games area.",
-    bids: [
-      {
-        contractor: "West Coast Build Co.",
-        amount: "$42,500",
-        timeline: "8 weeks",
-        rating: "4.8"
-      },
-      {
-        contractor: "Island Renovation Pros",
-        amount: "$47,000",
-        timeline: "7 weeks",
-        rating: "4.7"
-      }
-    ],
-    status: "Open"
-  },
-  {
-    id: 2,
-    title: "Duplex Framing Package",
-    owner: "Yukon Homes Inc.",
-    location: "Whitehorse, YT",
-    budget: "$120,000 - $180,000",
-    category: "Framing",
-    description: "Framing contractor needed for a multi-unit residential project.",
-    bids: [
-      {
-        contractor: "Northern Frame Ltd.",
-        amount: "$148,000",
-        timeline: "10 weeks",
-        rating: "4.9"
-      }
-    ],
-    status: "Open"
-  }
-];
-
 const paidAds = [
   {
     company: "Premium Stone & Tile",
@@ -94,6 +49,112 @@ function StatCard({ emoji, label, value }) {
           <p className="text-2xl font-bold text-slate-950">{value}</p>
         </div>
       </div>
+    </Card>
+  );
+}
+
+function AuthPanel({ onMessage }) {
+  const [mode, setMode] = useState("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("project_owner");
+  const [loading, setLoading] = useState(false);
+
+  async function handleAuth(event) {
+    event.preventDefault();
+    setLoading(true);
+
+    if (!email.trim() || !password.trim()) {
+      onMessage("Please enter both email and password.");
+      setLoading(false);
+      return;
+    }
+
+    if (mode === "signup") {
+      const { error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: {
+            role
+          }
+        }
+      });
+
+      if (error) {
+        onMessage(`Signup error: ${error.message}`);
+      } else {
+        onMessage("Signup successful. You are now signed in.");
+      }
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password
+      });
+
+      if (error) {
+        onMessage(`Login error: ${error.message}`);
+      } else {
+        onMessage("Login successful.");
+      }
+    }
+
+    setLoading(false);
+  }
+
+  return (
+    <Card>
+      <form onSubmit={handleAuth} className="p-6">
+        <div>
+          <p className="text-sm uppercase tracking-[0.25em] text-slate-500">Account</p>
+          <h3 className="mt-2 text-2xl font-black text-slate-950">
+            {mode === "signup" ? "Create your account" : "Log in to continue"}
+          </h3>
+          <p className="mt-2 text-sm text-slate-500">
+            Users must log in before listing projects or later submitting bids.
+          </p>
+        </div>
+
+        <div className="mt-5 grid gap-3">
+          <input
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900"
+            placeholder="Email address"
+          />
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900"
+            placeholder="Password"
+          />
+
+          {mode === "signup" ? (
+            <select
+              value={role}
+              onChange={(event) => setRole(event.target.value)}
+              className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900"
+            >
+              <option value="project_owner">Project Owner</option>
+              <option value="contractor">Contractor</option>
+            </select>
+          ) : null}
+
+          <AppButton type="submit" className="bg-emerald-600 hover:bg-emerald-700">
+            {loading ? "Please wait..." : mode === "signup" ? "Create account" : "Log in"}
+          </AppButton>
+
+          <button
+            type="button"
+            onClick={() => setMode(mode === "signup" ? "signin" : "signup")}
+            className="text-sm font-semibold text-slate-700 hover:text-slate-950"
+          >
+            {mode === "signup" ? "Already have an account? Log in" : "Need an account? Sign up"}
+          </button>
+        </div>
+      </form>
     </Card>
   );
 }
@@ -166,7 +227,7 @@ function ProjectCard({ project, onFinalize }) {
   );
 }
 
-function ProjectOwnerPanel({ onAddProject }) {
+function ProjectOwnerPanel({ onAddProject, user }) {
   const [project, setProject] = useState({
     title: "",
     location: "",
@@ -187,7 +248,7 @@ function ProjectOwnerPanel({ onAddProject }) {
 
     onAddProject({
       title: project.title.trim(),
-      owner: "New Project Owner",
+      owner: user?.email || "Project Owner",
       location: project.location.trim(),
       budget: project.budget.trim() || "Budget to be confirmed",
       category: "New Project",
@@ -263,13 +324,30 @@ function AdCard({ ad }) {
 }
 
 export default function ProjectBidMarketplaceApp() {
-  const [projects, setProjects] = useState(initialProjects);
+  const [projects, setProjects] = useState([]);
   const [query, setQuery] = useState("");
   const [message, setMessage] = useState("");
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
   useEffect(() => {
     fetchProjects();
+    getCurrentUser();
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user || null);
+    });
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
   }, []);
+
+  async function getCurrentUser() {
+    const { data } = await supabase.auth.getUser();
+    setUser(data?.user || null);
+    setAuthLoading(false);
+  }
 
   async function fetchProjects() {
     const { data, error } = await supabase
@@ -310,6 +388,11 @@ export default function ProjectBidMarketplaceApp() {
   const totalBids = projects.reduce((sum, project) => sum + (project.bids || []).length, 0);
 
   async function handleAddProject(newProject) {
+    if (!user) {
+      setMessage("Please log in before listing a project.");
+      return;
+    }
+
     const { error } = await supabase.from("projects").insert([
       {
         title: newProject.title,
@@ -332,11 +415,22 @@ export default function ProjectBidMarketplaceApp() {
     setMessage("Project saved to Supabase successfully.");
   }
 
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    setUser(null);
+    setMessage("You have logged out.");
+  }
+
   function handleFinalize(title) {
     setMessage(`Contract finalization started for ${title}. In production, Stripe will collect $5 from the project owner and $5 from the contractor before the contract is marked as final.`);
   }
 
   function handleVerify() {
+    if (!user) {
+      setMessage("Please log in before contractor verification.");
+      return;
+    }
+
     setMessage("Enrollment verification started. In production, Stripe will collect the $1 verification payment by credit card.");
   }
 
@@ -361,7 +455,13 @@ export default function ProjectBidMarketplaceApp() {
               <a href="#advertise" className="hover:text-white">Advertise</a>
             </div>
 
-            <a href="#enroll" className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-slate-200">Get started</a>
+            {user ? (
+              <button onClick={handleLogout} className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-slate-200">
+                Logout
+              </button>
+            ) : (
+              <a href="#account" className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-slate-200">Login</a>
+            )}
           </nav>
 
           <div className="grid items-center gap-12 py-16 lg:grid-cols-2">
@@ -416,6 +516,17 @@ export default function ProjectBidMarketplaceApp() {
 
         {message ? <div className="mt-8 rounded-3xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-800">{message}</div> : null}
 
+        <section id="account" className="mt-12">
+          {authLoading ? null : user ? (
+            <Card className="p-6">
+              <p className="text-sm text-slate-500">Logged in as</p>
+              <p className="mt-1 font-bold text-slate-950">{user.email}</p>
+            </Card>
+          ) : (
+            <AuthPanel onMessage={setMessage} />
+          )}
+        </section>
+
         <section id="projects" className="mt-12 grid gap-8 lg:grid-cols-[1fr_360px]">
           <div>
             <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -450,7 +561,7 @@ export default function ProjectBidMarketplaceApp() {
         </section>
 
         <section id="enroll" className="mt-14 grid gap-8 lg:grid-cols-2">
-          <ProjectOwnerPanel onAddProject={handleAddProject} />
+          {user ? <ProjectOwnerPanel onAddProject={handleAddProject} user={user} /> : <AuthPanel onMessage={setMessage} />}
           <EnrollmentPanel onVerify={handleVerify} />
         </section>
 
