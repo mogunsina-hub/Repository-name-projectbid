@@ -27,6 +27,9 @@ export default async function handler(request, response) {
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
+      metadata: {
+        paymentType
+      },
       line_items: [
         {
           price_data: {
