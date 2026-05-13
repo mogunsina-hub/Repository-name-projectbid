@@ -1,6 +1,24 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 
+async function startCheckout(paymentType) {
+  const response = await fetch("/api/create-checkout-session", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ paymentType })
+  });
+
+  const data = await response.json();
+
+  if (data.url) {
+    window.location.href = data.url;
+  } else {
+    alert(data.error || "Payment could not start.");
+  }
+}
+
 const paidAds = [
   {
     company: "Premium Stone & Tile",
@@ -159,8 +177,13 @@ function AuthPanel({ onMessage }) {
   );
 }
 
-function ProjectCard({ project, onFinalize }) {
+function ProjectCard({ project, onMessage }) {
   const bids = project.bids || [];
+
+  function handleFinalizePayment() {
+    onMessage(`Starting payment for ${project.title}. Stripe Checkout will collect the contract finalization fee.`);
+    startCheckout("finalization");
+  }
 
   return (
     <Card className="overflow-hidden border border-slate-100">
@@ -218,7 +241,7 @@ function ProjectCard({ project, onFinalize }) {
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
           <AppButton>Submit a bid</AppButton>
-          <AppButton onClick={() => onFinalize(project.title)} className="bg-emerald-600 hover:bg-emerald-700">
+          <AppButton onClick={handleFinalizePayment} className="bg-emerald-600 hover:bg-emerald-700">
             Finalize contract: $5 + $5
           </AppButton>
         </div>
@@ -283,7 +306,17 @@ function ProjectOwnerPanel({ onAddProject, user }) {
   );
 }
 
-function EnrollmentPanel({ onVerify }) {
+function EnrollmentPanel({ onVerify, user }) {
+  function handleVerificationPayment() {
+    if (!user) {
+      onVerify();
+      return;
+    }
+
+    onVerify();
+    startCheckout("verification");
+  }
+
   return (
     <Card>
       <div className="p-6">
@@ -299,7 +332,7 @@ function EnrollmentPanel({ onVerify }) {
           <input className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Company name" />
           <input className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Trade expertise, e.g. framing, plumbing, renovation" />
           <textarea className="min-h-28 rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Past projects, certifications, insurance, photos, and references" />
-          <AppButton onClick={onVerify}>💳 Pay $1 and verify enrollment</AppButton>
+          <AppButton onClick={handleVerificationPayment}>💳 Pay $1 and verify enrollment</AppButton>
         </div>
       </div>
     </Card>
@@ -316,7 +349,7 @@ function AdCard({ ad }) {
         <p className="mt-3 text-slate-700">{ad.text}</p>
         <div className="mt-4 flex items-center justify-between">
           <span className="font-bold text-slate-950">{ad.price}</span>
-          <AppButton variant="outline">Advertise</AppButton>
+          <AppButton variant="outline" onClick={() => startCheckout("advertisement")}>Advertise</AppButton>
         </div>
       </div>
     </Card>
@@ -341,6 +374,19 @@ export default function ProjectBidMarketplaceApp() {
     return () => {
       listener.subscription.unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const paymentStatus = params.get("payment");
+
+    if (paymentStatus === "success") {
+      setMessage("Payment successful. Thank you.");
+    }
+
+    if (paymentStatus === "cancelled") {
+      setMessage("Payment was cancelled.");
+    }
   }, []);
 
   async function getCurrentUser() {
@@ -421,17 +467,13 @@ export default function ProjectBidMarketplaceApp() {
     setMessage("You have logged out.");
   }
 
-  function handleFinalize(title) {
-    setMessage(`Contract finalization started for ${title}. In production, Stripe will collect $5 from the project owner and $5 from the contractor before the contract is marked as final.`);
-  }
-
   function handleVerify() {
     if (!user) {
       setMessage("Please log in before contractor verification.");
       return;
     }
 
-    setMessage("Enrollment verification started. In production, Stripe will collect the $1 verification payment by credit card.");
+    setMessage("Starting $1 contractor verification payment.");
   }
 
   return (
@@ -542,7 +584,7 @@ export default function ProjectBidMarketplaceApp() {
             </div>
 
             <div className="grid gap-6">
-              {filteredProjects.length > 0 ? filteredProjects.map((project) => <ProjectCard key={project.id} project={project} onFinalize={handleFinalize} />) : <Card className="p-8 text-center text-slate-600">No projects match your search.</Card>}
+              {filteredProjects.length > 0 ? filteredProjects.map((project) => <ProjectCard key={project.id} project={project} onMessage={setMessage} />) : <Card className="p-8 text-center text-slate-600">No projects match your search.</Card>}
             </div>
           </div>
 
@@ -552,7 +594,7 @@ export default function ProjectBidMarketplaceApp() {
                 <div className="text-3xl text-amber-300">📣</div>
                 <h3 className="mt-4 text-2xl font-black">Paid advertising</h3>
                 <p className="mt-2 text-slate-300">Suppliers, lenders, designers, trades, and service companies can promote offers inside the marketplace.</p>
-                <AppButton className="mt-5 bg-amber-300 text-slate-950 hover:bg-amber-200">Create ad campaign</AppButton>
+                <AppButton onClick={() => startCheckout("advertisement")} className="mt-5 bg-amber-300 text-slate-950 hover:bg-amber-200">Create ad campaign</AppButton>
               </div>
             </Card>
 
@@ -562,7 +604,7 @@ export default function ProjectBidMarketplaceApp() {
 
         <section id="enroll" className="mt-14 grid gap-8 lg:grid-cols-2">
           {user ? <ProjectOwnerPanel onAddProject={handleAddProject} user={user} /> : <AuthPanel onMessage={setMessage} />}
-          <EnrollmentPanel onVerify={handleVerify} />
+          <EnrollmentPanel onVerify={handleVerify} user={user} />
         </section>
 
         <section className="mt-14 rounded-[2rem] bg-white p-8 shadow-xl">
