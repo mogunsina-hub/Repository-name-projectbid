@@ -177,8 +177,137 @@ function AuthPanel({ onMessage }) {
   );
 }
 
-function ProjectCard({ project, onMessage }) {
+function BidForm({ project, user, onMessage, onBidSaved }) {
+  const [bidAmount, setBidAmount] = useState("");
+  const [timeline, setTimeline] = useState("");
+  const [proposal, setProposal] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submitBid(event) {
+    event.preventDefault();
+
+    if (!user) {
+      onMessage("Please log in before submitting a bid.");
+      return;
+    }
+
+    if (!bidAmount.trim() || !timeline.trim()) {
+      onMessage("Please enter a bid amount and timeline.");
+      return;
+    }
+
+    setLoading(true);
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("company_name")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const { error } = await supabase.from("bids").insert([
+      {
+        project_id: project.id,
+        contractor_id: user.id,
+        contractor_email: user.email,
+        company_name: profile?.company_name || user.email,
+        bid_amount: bidAmount.trim(),
+        timeline: timeline.trim(),
+        proposal: proposal.trim(),
+        status: "pending"
+      }
+    ]);
+
+    setLoading(false);
+
+    if (error) {
+      onMessage(`Could not submit bid: ${error.message}`);
+      return;
+    }
+
+    setBidAmount("");
+    setTimeline("");
+    setProposal("");
+    onMessage("Bid submitted successfully.");
+    onBidSaved();
+  }
+
+  return (
+    <form onSubmit={submitBid} className="mt-5 rounded-2xl border bg-slate-50 p-4">
+      <h5 className="font-bold text-slate-950">Submit your bid</h5>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <input value={bidAmount} onChange={(event) => setBidAmount(event.target.value)} className="rounded-2xl border bg-white p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Bid amount, e.g. $42,500" />
+        <input value={timeline} onChange={(event) => setTimeline(event.target.value)} className="rounded-2xl border bg-white p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Timeline, e.g. 8 weeks" />
+      </div>
+      <textarea value={proposal} onChange={(event) => setProposal(event.target.value)} className="mt-3 min-h-24 w-full rounded-2xl border bg-white p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Proposal details, experience, materials, exclusions, warranty, and notes" />
+      <AppButton type="submit" className="mt-3 bg-blue-700 hover:bg-blue-800">
+        {loading ? "Submitting..." : "Submit bid"}
+      </AppButton>
+    </form>
+  );
+}
+
+function ProjectCard({ project, user, onMessage, onBidSaved }) {
   const bids = project.bids || [];
+
+  async function acceptBid(bid) {
+    if (!user) {
+      onMessage("Please log in before accepting a bid.");
+      return;
+    }
+
+    const { error: bidError } = await supabase
+      .from("bids")
+      .update({ status: "rejected" })
+      .eq("project_id", project.id);
+
+    if (bidError) {
+      onMessage(`Could not update other bids: ${bidError.message}`);
+      return;
+    }
+
+    const { error: acceptedBidError } = await supabase
+      .from("bids")
+      .update({ status: "accepted" })
+      .eq("id", bid.id);
+
+    if (acceptedBidError) {
+      onMessage(`Could not accept bid: ${acceptedBidError.message}`);
+      return;
+    }
+
+    const { error: projectError } = await supabase
+      .from("projects")
+      .update({
+        accepted_bid_id: bid.id,
+        accepted_contractor_email: bid.contractor_email,
+        status: "Bid Accepted"
+      })
+      .eq("id", project.id);
+
+    if (projectError) {
+      onMessage(`Could not update project: ${projectError.message}`);
+      return;
+    }
+
+    const { error: contractError } = await supabase.from("contracts").insert([
+      {
+        project_id: project.id,
+        bid_id: bid.id,
+        owner_email: project.owner,
+        contractor_email: bid.contractor_email,
+        status: "pending_payment"
+      }
+    ]);
+
+    if (contractError) {
+      onMessage(`Bid accepted, but contract was not created: ${contractError.message}`);
+      return;
+    }
+
+    onMessage("Bid accepted. Contract created. Starting finalization payment.");
+    await onBidSaved();
+    startCheckout("finalization");
+  }
 
   function handleFinalizePayment() {
     onMessage(`Starting payment for ${project.title}. Stripe Checkout will collect the contract finalization fee.`);
@@ -223,12 +352,17 @@ function ProjectCard({ project, onMessage }) {
                 className="flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div>
-                  <p className="font-semibold text-slate-900">{bid.contractor}</p>
-                  <p className="mt-1 text-sm text-slate-500">⭐ {bid.rating} rating</p>
+                  <p className="font-semibold text-slate-900">{bid.company_name || bid.contractor || bid.contractor_email}</p>
+                  <p className="mt-1 text-sm text-slate-500">{bid.status ? `Status: ${bid.status}` : `⭐ ${bid.rating} rating`}</p>
                 </div>
-                <div className="flex gap-4 text-sm text-slate-700">
-                  <span>{bid.amount}</span>
-                  <span>⏱ {bid.timeline}</span>
+                <div className="flex flex-col gap-3 sm:items-end">
+                  <div className="flex gap-4 text-sm text-slate-700">
+                    <span>{bid.bid_amount || bid.amount}</span>
+                    <span>⏱ {bid.timeline}</span>
+                  </div>
+                  <AppButton onClick={() => acceptBid(bid)} className="bg-emerald-600 px-4 py-2 hover:bg-emerald-700">
+                    Accept Bid
+                  </AppButton>
                 </div>
               </div>
             ))
@@ -239,8 +373,9 @@ function ProjectCard({ project, onMessage }) {
           )}
         </div>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-2">
-          <AppButton>Submit a bid</AppButton>
+        <BidForm project={project} user={user} onMessage={onMessage} onBidSaved={onBidSaved} />
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-1">
           <AppButton onClick={handleFinalizePayment} className="bg-emerald-600 hover:bg-emerald-700">
             Finalize contract: $5 + $5
           </AppButton>
@@ -300,6 +435,107 @@ function ProjectOwnerPanel({ onAddProject, user }) {
           <input value={project.budget} onChange={(event) => updateField("budget", event.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Budget range" />
           <textarea value={project.description} onChange={(event) => updateField("description", event.target.value)} className="min-h-28 rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Describe the scope, drawings, timeline, permits, and site conditions" />
           <AppButton type="submit" className="bg-blue-700 hover:bg-blue-800">Publish project</AppButton>
+        </div>
+      </form>
+    </Card>
+  );
+}
+
+function ContractorProfilePanel({ user, onMessage }) {
+  const [profile, setProfile] = useState({
+    company_name: "",
+    expertise: "",
+    years_experience: "",
+    certifications: "",
+    portfolio: ""
+  });
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      fetchProfile();
+    }
+  }, [user]);
+
+  async function fetchProfile() {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (error) {
+      onMessage(`Could not load profile: ${error.message}`);
+      return;
+    }
+
+    if (data) {
+      setProfile({
+        company_name: data.company_name || "",
+        expertise: data.expertise || "",
+        years_experience: data.years_experience || "",
+        certifications: data.certifications || "",
+        portfolio: data.portfolio || ""
+      });
+    }
+  }
+
+  function updateField(field, value) {
+    setProfile((current) => ({ ...current, [field]: value }));
+  }
+
+  async function saveProfile(event) {
+    event.preventDefault();
+
+    if (!user) {
+      onMessage("Please log in before creating a contractor profile.");
+      return;
+    }
+
+    setLoading(true);
+
+    const { error } = await supabase.from("profiles").upsert({
+      id: user.id,
+      email: user.email,
+      role: "contractor",
+      company_name: profile.company_name,
+      expertise: profile.expertise,
+      years_experience: profile.years_experience ? Number(profile.years_experience) : null,
+      certifications: profile.certifications,
+      portfolio: profile.portfolio,
+      updated_at: new Date().toISOString()
+    });
+
+    setLoading(false);
+
+    if (error) {
+      onMessage(`Could not save profile: ${error.message}`);
+      return;
+    }
+
+    onMessage("Contractor profile saved successfully.");
+  }
+
+  return (
+    <Card>
+      <form onSubmit={saveProfile} className="p-6">
+        <div className="flex items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-purple-100 text-2xl text-purple-700">👷</div>
+          <div>
+            <h3 className="text-xl font-bold text-slate-950">Contractor profile</h3>
+            <p className="text-sm text-slate-500">Add your company details, expertise, and past work.</p>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3">
+          <input value={profile.company_name} onChange={(event) => updateField("company_name", event.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Company name" />
+          <input value={profile.expertise} onChange={(event) => updateField("expertise", event.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Expertise, e.g. framing, plumbing, renovation" />
+          <input type="number" value={profile.years_experience} onChange={(event) => updateField("years_experience", event.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Years of experience" />
+          <textarea value={profile.certifications} onChange={(event) => updateField("certifications", event.target.value)} className="min-h-24 rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Certifications, insurance, license information" />
+          <textarea value={profile.portfolio} onChange={(event) => updateField("portfolio", event.target.value)} className="min-h-28 rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Past projects, references, portfolio notes" />
+          <AppButton type="submit" className="bg-purple-700 hover:bg-purple-800">
+            {loading ? "Saving..." : "Save contractor profile"}
+          </AppButton>
         </div>
       </form>
     </Card>
@@ -396,20 +632,31 @@ export default function ProjectBidMarketplaceApp() {
   }
 
   async function fetchProjects() {
-    const { data, error } = await supabase
+    const { data: projectData, error: projectError } = await supabase
       .from("projects")
       .select("*")
       .order("created_at", { ascending: false });
 
-    if (error) {
-      console.error(error);
-      setMessage(`Supabase error: ${error.message}`);
+    if (projectError) {
+      console.error(projectError);
+      setMessage(`Supabase error: ${projectError.message}`);
       return;
     }
 
-    const projectsWithBids = data.map((project) => ({
+    const { data: bidData, error: bidError } = await supabase
+      .from("bids")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (bidError) {
+      console.error(bidError);
+      setMessage(`Bid loading error: ${bidError.message}`);
+      return;
+    }
+
+    const projectsWithBids = projectData.map((project) => ({
       ...project,
-      bids: []
+      bids: bidData.filter((bid) => bid.project_id === project.id)
     }));
 
     setProjects(projectsWithBids);
@@ -584,7 +831,7 @@ export default function ProjectBidMarketplaceApp() {
             </div>
 
             <div className="grid gap-6">
-              {filteredProjects.length > 0 ? filteredProjects.map((project) => <ProjectCard key={project.id} project={project} onMessage={setMessage} />) : <Card className="p-8 text-center text-slate-600">No projects match your search.</Card>}
+              {filteredProjects.length > 0 ? filteredProjects.map((project) => <ProjectCard key={project.id} project={project} user={user} onMessage={setMessage} onBidSaved={fetchProjects} />) : <Card className="p-8 text-center text-slate-600">No projects match your search.</Card>}
             </div>
           </div>
 
@@ -605,6 +852,10 @@ export default function ProjectBidMarketplaceApp() {
         <section id="enroll" className="mt-14 grid gap-8 lg:grid-cols-2">
           {user ? <ProjectOwnerPanel onAddProject={handleAddProject} user={user} /> : <AuthPanel onMessage={setMessage} />}
           <EnrollmentPanel onVerify={handleVerify} user={user} />
+        </section>
+
+        <section id="contractor-profile" className="mt-14">
+          {user ? <ContractorProfilePanel user={user} onMessage={setMessage} /> : null}
         </section>
 
         <section className="mt-14 rounded-[2rem] bg-white p-8 shadow-xl">

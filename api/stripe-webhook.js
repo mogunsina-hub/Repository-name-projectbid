@@ -69,3 +69,31 @@ export default async function handler(req, res) {
     received: true,
   });
 }
+if (event.type === "checkout.session.completed") {
+    if (session.metadata?.paymentType === "finalization") {
+  const { data: contract } = await supabase
+    .from("contracts")
+    .select("*")
+    .eq("status", "pending_payment")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (contract) {
+    await supabase
+      .from("contracts")
+      .update({
+        status: "finalized",
+        finalized_at: new Date().toISOString()
+      })
+      .eq("id", contract.id);
+
+    await supabase
+      .from("projects")
+      .update({
+        status: "Finalized",
+        finalized_at: new Date().toISOString()
+      })
+      .eq("id", contract.project_id);
+  }
+}
