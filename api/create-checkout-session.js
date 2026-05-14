@@ -8,7 +8,7 @@ export default async function handler(request, response) {
   }
 
   try {
-    const { paymentType } = request.body;
+    const { paymentType, contractId } = request.body;
 
     const amount =
       paymentType === "verification"
@@ -28,7 +28,8 @@ export default async function handler(request, response) {
       mode: "payment",
       payment_method_types: ["card"],
       metadata: {
-        paymentType
+        paymentType,
+        contractId: contractId || ""
       },
       line_items: [
         {

@@ -48,6 +48,7 @@ export default async function handler(req, res) {
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     const paymentType = session.metadata?.paymentType || "unknown";
+    const contractId = session.metadata?.contractId || null;
 
     const { error: paymentError } = await supabase.from("payments").insert({
       stripe_session_id: session.id,
@@ -66,13 +67,13 @@ export default async function handler(req, res) {
       });
     }
 
-    if (paymentType === "finalization") {
+    if (paymentType === "finalization" && contractId) {
+      const finalizedAt = new Date().toISOString();
+
       const { data: contract, error: contractFindError } = await supabase
         .from("contracts")
         .select("*")
-        .eq("status", "pending_payment")
-        .order("created_at", { ascending: false })
-        .limit(1)
+        .eq("id", contractId)
         .maybeSingle();
 
       if (contractFindError) {
@@ -83,8 +84,6 @@ export default async function handler(req, res) {
       }
 
       if (contract) {
-        const finalizedAt = new Date().toISOString();
-
         const { error: contractUpdateError } = await supabase
           .from("contracts")
           .update({

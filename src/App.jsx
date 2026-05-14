@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 
-async function startCheckout(paymentType) {
+async function startCheckout(paymentType, contractId = null) {
   const response = await fetch("/api/create-checkout-session", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ paymentType })
+    body: JSON.stringify({ paymentType, contractId })
   });
 
   const data = await response.json();
@@ -289,15 +289,18 @@ function ProjectCard({ project, user, onMessage, onBidSaved }) {
       return;
     }
 
-    const { error: contractError } = await supabase.from("contracts").insert([
-      {
-        project_id: project.id,
-        bid_id: bid.id,
-        owner_email: project.owner,
-        contractor_email: bid.contractor_email,
-        status: "pending_payment"
-      }
-    ]);
+    const { data: contractData, error: contractError } = await supabase
+      .from("contracts")
+      .insert([
+        {
+          project_id: project.id,
+          bid_id: bid.id,
+          owner_email: project.owner,
+          contractor_email: bid.contractor_email,
+          status: "pending_payment"
+        }
+      ])
+      .select();
 
     if (contractError) {
       onMessage(`Bid accepted, but contract was not created: ${contractError.message}`);
@@ -306,7 +309,7 @@ function ProjectCard({ project, user, onMessage, onBidSaved }) {
 
     onMessage("Bid accepted. Contract created. Starting finalization payment.");
     await onBidSaved();
-    startCheckout("finalization");
+    startCheckout("finalization", contractData?.[0]?.id || null);
   }
 
   function handleFinalizePayment() {
