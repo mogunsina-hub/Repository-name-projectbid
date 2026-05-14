@@ -8,28 +8,29 @@ export default async function handler(request, response) {
   }
 
   try {
-    const { paymentType, contractId } = request.body;
+    const { paymentType, contractId, userId } = request.body;
 
-    const amount =
-      paymentType === "verification"
-        ? 100
-        : paymentType === "finalization"
-        ? 500
-        : 4900;
+    const isMembership = paymentType === "verification";
 
-    const name =
-      paymentType === "verification"
-        ? "ProjectBid $1 Verification"
-        : paymentType === "finalization"
-        ? "ProjectBid $5 Contract Finalization Fee"
-        : "ProjectBid Advertisement";
+    const amount = isMembership
+      ? 500
+      : paymentType === "finalization"
+      ? 500
+      : 4900;
+
+    const name = isMembership
+      ? "ProjectBid $5 Monthly Membership"
+      : paymentType === "finalization"
+      ? "ProjectBid $5 Contract Finalization Fee"
+      : "ProjectBid Advertisement";
 
     const session = await stripe.checkout.sessions.create({
-      mode: "payment",
+      mode: isMembership ? "subscription" : "payment",
       payment_method_types: ["card"],
       metadata: {
         paymentType,
-        contractId: contractId || ""
+        contractId: contractId || "",
+        userId: userId || ""
       },
       line_items: [
         {
@@ -38,7 +39,12 @@ export default async function handler(request, response) {
             product_data: {
               name
             },
-            unit_amount: amount
+            unit_amount: amount,
+            recurring: isMembership
+              ? {
+                  interval: "month"
+                }
+              : undefined
           },
           quantity: 1
         }

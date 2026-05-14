@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 
-async function startCheckout(paymentType, contractId = null) {
+async function startCheckout(paymentType, contractId = null, userId = null) {
   const response = await fetch("/api/create-checkout-session", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ paymentType, contractId })
+    body: JSON.stringify({ paymentType, contractId, userId })
   });
 
   const data = await response.json();
@@ -553,7 +553,7 @@ function EnrollmentPanel({ onVerify, user }) {
     }
 
     onVerify();
-    startCheckout("verification");
+    startCheckout("verification", null, user.id);
   }
 
   return (
@@ -563,7 +563,7 @@ function EnrollmentPanel({ onVerify, user }) {
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-2xl text-emerald-700">✅</div>
           <div>
             <h3 className="text-xl font-bold text-slate-950">Contractor enrollment</h3>
-            <p className="text-sm text-slate-500">Verify real users with a $1 card payment.</p>
+            <p className="text-sm text-slate-500">Activate membership with a $5 monthly card payment.</p>
           </div>
         </div>
 
@@ -571,7 +571,7 @@ function EnrollmentPanel({ onVerify, user }) {
           <input className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Company name" />
           <input className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Trade expertise, e.g. framing, plumbing, renovation" />
           <textarea className="min-h-28 rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Past projects, certifications, insurance, photos, and references" />
-          <AppButton onClick={handleVerificationPayment}>💳 Pay $1 and verify enrollment</AppButton>
+          <AppButton onClick={handleVerificationPayment}>💳 Start $5 monthly membership</AppButton>
         </div>
       </div>
     </Card>
@@ -723,7 +723,7 @@ export default function ProjectBidMarketplaceApp() {
       return;
     }
 
-    setMessage("Starting $1 contractor verification payment.");
+    setMessage("Starting $5 monthly membership payment.");
   }
 
   return (
@@ -758,7 +758,7 @@ export default function ProjectBidMarketplaceApp() {
 
           <div className="grid items-center gap-12 py-16 lg:grid-cols-2">
             <div>
-              <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm text-slate-200">🛡 $1 verification. $5 + $5 contract finalization fee.</p>
+              <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm text-slate-200">🛡 $5 monthly membership. $5 + $5 contract finalization fee.</p>
               <h1 className="mt-6 text-5xl font-black leading-tight md:text-6xl">Find trusted contractors. Bid smarter. Finalize safely.</h1>
               <p className="mt-6 max-w-xl text-lg text-slate-300">A premium marketplace where project owners post construction work, verified contractors bid, and both sides pay a small platform fee before finalizing the contract.</p>
 
@@ -802,7 +802,7 @@ export default function ProjectBidMarketplaceApp() {
         <section className="relative z-10 -mt-20 grid gap-4 md:grid-cols-4">
           <StatCard emoji="🔨" label="Open projects" value={projects.length} />
           <StatCard emoji="✅" label="Verified users" value="312" />
-          <StatCard emoji="💳" label="Verification fee" value="$1" />
+          <StatCard emoji="💳" label="Monthly membership" value="$5" />
           <StatCard emoji="📄" label="Active bids" value={totalBids} />
         </section>
 
@@ -866,8 +866,8 @@ export default function ProjectBidMarketplaceApp() {
           <div className="mt-6 grid gap-5 md:grid-cols-3">
             <div className="rounded-3xl bg-slate-50 p-5">
               <div className="text-3xl">💳</div>
-              <h3 className="mt-3 font-bold">$1 enrollment verification</h3>
-              <p className="mt-2 text-sm text-slate-600">Contractors and project owners pay $1 by card when registering to reduce fake accounts.</p>
+              <h3 className="mt-3 font-bold">$5 monthly membership</h3>
+              <p className="mt-2 text-sm text-slate-600">All users pay $5 per month to maintain an active platform membership.</p>
             </div>
 
             <div className="rounded-3xl bg-slate-50 p-5">

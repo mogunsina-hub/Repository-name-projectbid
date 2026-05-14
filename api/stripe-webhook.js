@@ -41,7 +41,6 @@ export default async function handler(req, res) {
       process.env.STRIPE_WEBHOOK_SECRET
     );
   } catch (err) {
-    console.error("Stripe webhook verification failed:", err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
@@ -49,6 +48,7 @@ export default async function handler(req, res) {
     const session = event.data.object;
     const paymentType = session.metadata?.paymentType || "unknown";
     const contractId = session.metadata?.contractId || null;
+    const userId = session.metadata?.userId || null;
 
     const { error: paymentError } = await supabase.from("payments").insert({
       stripe_session_id: session.id,
@@ -61,10 +61,21 @@ export default async function handler(req, res) {
     });
 
     if (paymentError) {
-      console.error("Supabase payment insert error:", paymentError.message);
-      return res.status(500).json({
-        error: paymentError.message,
-      });
+      return res.status(500).json({ error: paymentError.message });
+    }
+
+    if (paymentType === "verification" && userId) {
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .update({
+          is_verified: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", userId);
+
+      if (profileError) {
+        return res.status(500).json({ error: profileError.message });
+      }
     }
 
     if (paymentType === "finalization" && contractId) {
@@ -77,14 +88,11 @@ export default async function handler(req, res) {
         .maybeSingle();
 
       if (contractFindError) {
-        console.error("Contract lookup error:", contractFindError.message);
-        return res.status(500).json({
-          error: contractFindError.message,
-        });
+        return res.status(500).json({ error: contractFindError.message });
       }
 
       if (contract) {
-        const { error: contractUpdateError } = await supabase
+        await supabase
           .from("contracts")
           .update({
             status: "finalized",
@@ -92,32 +100,16 @@ export default async function handler(req, res) {
           })
           .eq("id", contract.id);
 
-        if (contractUpdateError) {
-          console.error("Contract update error:", contractUpdateError.message);
-          return res.status(500).json({
-            error: contractUpdateError.message,
-          });
-        }
-
-        const { error: projectUpdateError } = await supabase
+        await supabase
           .from("projects")
           .update({
             status: "Finalized",
             finalized_at: finalizedAt,
           })
           .eq("id", contract.project_id);
-
-        if (projectUpdateError) {
-          console.error("Project update error:", projectUpdateError.message);
-          return res.status(500).json({
-            error: projectUpdateError.message,
-          });
-        }
       }
     }
   }
 
-  return res.status(200).json({
-    received: true,
-  });
+  return res.status(200).json({ received: true });
 }
