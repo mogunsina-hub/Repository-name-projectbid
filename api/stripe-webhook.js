@@ -47,53 +47,78 @@ export default async function handler(req, res) {
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
+    const paymentType = session.metadata?.paymentType || "unknown";
 
-    const { error } = await supabase.from("payments").insert({
+    const { error: paymentError } = await supabase.from("payments").insert({
       stripe_session_id: session.id,
-      payment_type: session.metadata?.paymentType || "unknown",
+      payment_type: paymentType,
       amount: session.amount_total || 0,
       currency: session.currency || "cad",
-      customer_email: session.customer_details?.email || session.customer_email || null,
+      customer_email:
+        session.customer_details?.email || session.customer_email || null,
       status: session.payment_status || "paid",
     });
 
-    if (error) {
-      console.error("Supabase insert error:", error.message);
+    if (paymentError) {
+      console.error("Supabase payment insert error:", paymentError.message);
       return res.status(500).json({
-        error: error.message,
+        error: paymentError.message,
       });
+    }
+
+    if (paymentType === "finalization") {
+      const { data: contract, error: contractFindError } = await supabase
+        .from("contracts")
+        .select("*")
+        .eq("status", "pending_payment")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (contractFindError) {
+        console.error("Contract lookup error:", contractFindError.message);
+        return res.status(500).json({
+          error: contractFindError.message,
+        });
+      }
+
+      if (contract) {
+        const finalizedAt = new Date().toISOString();
+
+        const { error: contractUpdateError } = await supabase
+          .from("contracts")
+          .update({
+            status: "finalized",
+            finalized_at: finalizedAt,
+          })
+          .eq("id", contract.id);
+
+        if (contractUpdateError) {
+          console.error("Contract update error:", contractUpdateError.message);
+          return res.status(500).json({
+            error: contractUpdateError.message,
+          });
+        }
+
+        const { error: projectUpdateError } = await supabase
+          .from("projects")
+          .update({
+            status: "Finalized",
+            finalized_at: finalizedAt,
+          })
+          .eq("id", contract.project_id);
+
+        if (projectUpdateError) {
+          console.error("Project update error:", projectUpdateError.message);
+          return res.status(500).json({
+            error: projectUpdateError.message,
+          });
+        }
+      }
     }
   }
 
   return res.status(200).json({
     received: true,
   });
-}
-if (event.type === "checkout.session.completed") {
-    if (session.metadata?.paymentType === "finalization") {
-  const { data: contract } = await supabase
-    .from("contracts")
-    .select("*")
-    .eq("status", "pending_payment")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (contract) {
-    await supabase
-      .from("contracts")
-      .update({
-        status: "finalized",
-        finalized_at: new Date().toISOString()
-      })
-      .eq("id", contract.id);
-
-    await supabase
-      .from("projects")
-      .update({
-        status: "Finalized",
-        finalized_at: new Date().toISOString()
-      })
-      .eq("id", contract.project_id);
-  }
 }
