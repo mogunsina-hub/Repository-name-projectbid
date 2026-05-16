@@ -24,6 +24,13 @@ async function getRawBody(req) {
   return Buffer.concat(chunks);
 }
 
+function getTierFromPaymentType(paymentType) {
+  if (paymentType === "contractor_pro_monthly") return "pro";
+  if (paymentType === "contractor_verified_monthly") return "verified";
+  if (paymentType === "contractor_universal_monthly") return "universal";
+  return null;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
@@ -46,9 +53,15 @@ export default async function handler(req, res) {
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
+
     const paymentType = session.metadata?.paymentType || "unknown";
     const contractId = session.metadata?.contractId || null;
     const userId = session.metadata?.userId || null;
+    const tier = session.metadata?.tier || getTierFromPaymentType(paymentType);
+    const leadRole = session.metadata?.leadRole || null;
+    const projectId = session.metadata?.projectId || null;
+    const city = session.metadata?.city || null;
+    const category = session.metadata?.category || null;
 
     const { error: paymentError } = await supabase.from("payments").insert({
       stripe_session_id: session.id,
@@ -64,8 +77,8 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: paymentError.message });
     }
 
-    if (paymentType === "verification" && userId) {
-      const { error: profileError } = await supabase
+    if (paymentType === "human_verification" && userId) {
+      const { error } = await supabase
         .from("profiles")
         .update({
           is_verified: true,
@@ -73,9 +86,51 @@ export default async function handler(req, res) {
         })
         .eq("id", userId);
 
-      if (profileError) {
-        return res.status(500).json({ error: profileError.message });
+      if (error) {
+        return res.status(500).json({ error: error.message });
       }
+    }
+
+    if (
+      [
+        "contractor_pro_monthly",
+        "contractor_verified_monthly",
+        "contractor_universal_monthly",
+      ].includes(paymentType) &&
+      userId &&
+      tier
+    ) {
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          contractor_tier: tier,
+          subscription_status: "active",
+          subscription_payment_type: paymentType,
+          stripe_customer_id: session.customer || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", userId);
+
+      if (error) {
+        return res.status(500).json({ error: error.message });
+      }
+    }
+
+    if (
+      [
+        "featured_listing_day",
+        "featured_listing_week",
+        "featured_listing_month",
+        "ad_day",
+        "ad_week",
+        "ad_month",
+        "lead_unlock_contractor",
+        "lead_unlock_owner",
+      ].includes(paymentType)
+    ) {
+      await supabase.from("payments").update({
+        status: "paid",
+      }).eq("stripe_session_id", session.id);
     }
 
     if (paymentType === "finalization" && contractId) {
@@ -92,7 +147,7 @@ export default async function handler(req, res) {
       }
 
       if (contract) {
-        await supabase
+        const { error: contractUpdateError } = await supabase
           .from("contracts")
           .update({
             status: "finalized",
@@ -100,13 +155,21 @@ export default async function handler(req, res) {
           })
           .eq("id", contract.id);
 
-        await supabase
+        if (contractUpdateError) {
+          return res.status(500).json({ error: contractUpdateError.message });
+        }
+
+        const { error: projectUpdateError } = await supabase
           .from("projects")
           .update({
             status: "Finalized",
             finalized_at: finalizedAt,
           })
           .eq("id", contract.project_id);
+
+        if (projectUpdateError) {
+          return res.status(500).json({ error: projectUpdateError.message });
+        }
       }
     }
   }
