@@ -1,994 +1,321 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 
-// =====================================================
-// CENTRAL PLATFORM CONFIG
-// All prices, payment types, limits, and privileges live here.
-// Update this object first when changing monetization rules.
-// =====================================================
-const PLATFORM_CONFIG = {
-  verification: {
-    label: "$5 one-time human verification",
-    amount: 5,
-    paymentType: "human_verification",
-    description: "A one-time check that helps keep the marketplace real and reduces fake accounts."
-  },
-  contractorTiers: {
-    free: {
-      key: "free",
-      name: "Free Contractor",
-      priceLabel: "$0/month",
-      paymentType: null,
-      monthlyBidLimit: 3,
-      badge: "Starter",
-      searchPriority: 0,
-      canBidNationwide: false,
-      canReceiveInstantAreaNotifications: false,
-      features: [
-        "Bid on 3 projects per month",
-        "Basic contractor profile",
-        "Standard search placement"
-      ]
-    },
-    pro: {
-      key: "pro",
-      name: "Pro Contractor",
-      priceLabel: "$14.99/month",
-      paymentType: "contractor_pro_monthly",
-      monthlyBidLimit: Infinity,
-      badge: "Featured Contractor",
-      searchPriority: 1,
-      canBidNationwide: false,
-      canReceiveInstantAreaNotifications: false,
-      features: [
-        "Unlimited bids",
-        "Featured Contractor badge",
-        "Priority ranking in search results"
-      ]
-    },
-    verified: {
-      key: "verified",
-      name: "Verified Contractor",
-      priceLabel: "$19.99/month",
-      paymentType: "contractor_verified_monthly",
-      monthlyBidLimit: Infinity,
-      badge: "Verified Contractor",
-      searchPriority: 2,
-      canBidNationwide: false,
-      canReceiveInstantAreaNotifications: true,
-      features: [
-        "All Pro Contractor privileges",
-        "Verified Contractor badge",
-        "Instant notifications for new projects in your area"
-      ]
-    },
-    universal: {
-      key: "universal",
-      name: "Universal Contractor",
-      priceLabel: "$29.99/month",
-      paymentType: "contractor_universal_monthly",
-      monthlyBidLimit: Infinity,
-      badge: "Universal Contractor",
-      searchPriority: 3,
-      canBidNationwide: true,
-      canReceiveInstantAreaNotifications: true,
-      features: [
-        "All Verified Contractor privileges",
-        "Bid on projects across provinces or states in your country",
-        "Expanded geographic reach"
-      ]
-    }
-  },
+const CONFIG = {
+  verification: { label: "$5 one-time human verification", paymentType: "human_verification" },
+  contractorTiers: [
+    { key: "free", name: "Free", price: "$0", period: "/month", badge: "Starter", recommended: false, bidLimit: 3, features: ["3 bids/month", "Basic profile", "Standard search placement"] },
+    { key: "pro", name: "Pro", price: "$14.99", period: "/month", badge: "Featured", recommended: true, paymentType: "contractor_pro_monthly", bidLimit: Infinity, features: ["Unlimited bids", "Featured Contractor badge", "Priority search ranking"] },
+    { key: "verified", name: "Verified", price: "$19.99", period: "/month", badge: "Verified", recommended: false, paymentType: "contractor_verified_monthly", bidLimit: Infinity, features: ["All Pro features", "Verified Contractor badge", "Instant local project notifications"] },
+    { key: "universal", name: "Universal", price: "$29.99", period: "/month", badge: "Universal", recommended: false, paymentType: "contractor_universal_monthly", bidLimit: Infinity, features: ["All Verified features", "Bid across provinces/states", "Wider geographic reach"] }
+  ],
   featuredListings: [
-    {
-      key: "featured_day",
-      label: "$5/day",
-      paymentType: "featured_listing_day",
-      description: "Temporary boost to appear first in search for one day."
-    },
-    {
-      key: "featured_week",
-      label: "$15/week",
-      paymentType: "featured_listing_week",
-      description: "Featured placement on search, homepage, and selected cities/categories for one week."
-    },
-    {
-      key: "featured_month",
-      label: "$29/month",
-      paymentType: "featured_listing_month",
-      description: "Monthly featured visibility across search, homepage, and specific categories."
-    }
+    { key: "day", label: "$5/day", paymentType: "featured_listing_day" },
+    { key: "week", label: "$15/week", paymentType: "featured_listing_week" },
+    { key: "month", label: "$29/month", paymentType: "featured_listing_month" }
+  ],
+  ads: [
+    { key: "day", label: "$5/day", paymentType: "ad_day" },
+    { key: "week", label: "$25/week", paymentType: "ad_week" },
+    { key: "month", label: "$79/month", paymentType: "ad_month" }
   ],
   leadUnlock: {
-    contractor: {
-      label: "Contractor unlock",
-      amountLabel: "$15",
-      paymentType: "lead_unlock_contractor"
-    },
-    owner: {
-      label: "Owner unlock",
-      amountLabel: "$5",
-      paymentType: "lead_unlock_owner"
-    }
-  },
-  advertisements: [
-    {
-      key: "ad_day",
-      label: "$5/day",
-      paymentType: "ad_day",
-      description: "Daily ad placement on homepage, contractor dashboard, or project detail pages."
-    },
-    {
-      key: "ad_week",
-      label: "$25/week",
-      paymentType: "ad_week",
-      description: "Weekly ad visibility for owners, contractors, and suppliers."
-    },
-    {
-      key: "ad_month",
-      label: "$79/month",
-      paymentType: "ad_month",
-      description: "Monthly advertising package across key marketplace pages."
-    }
-  ]
+    contractor: { label: "Contractor", price: "$15", paymentType: "lead_unlock_contractor" },
+    owner: { label: "Owner", price: "$5", paymentType: "lead_unlock_owner" }
+  }
 };
 
-const DEFAULT_TIER = PLATFORM_CONFIG.contractorTiers.free;
+const sampleProjects = [
+  { id: 1, title: "Luxury basement suite renovation", budget: "$35,000 - $55,000", location: "Nanaimo, BC", category: "Renovation", timeline: "8 weeks", posted: "2h ago", rating: 4.9, description: "Create a modern two-bedroom suite with theatre area, gym corner, and premium finishes.", bids: 4, featured: true },
+  { id: 2, title: "Duplex framing package", budget: "$120,000 - $180,000", location: "Whitehorse, YT", category: "Framing", timeline: "10 weeks", posted: "1d ago", rating: 4.7, description: "Framing contractor required for multi-unit residential package with permit drawings ready.", bids: 7, featured: false },
+  { id: 3, title: "Commercial tenant improvement", budget: "$75,000 - $110,000", location: "Victoria, BC", category: "Commercial", timeline: "6 weeks", posted: "3d ago", rating: 4.8, description: "Interior build-out with flooring, partitions, millwork, and lighting upgrades.", bids: 3, featured: true }
+];
 
-// =====================================================
-// STRIPE CHECKOUT HELPER
-// Vercel serverless API receives paymentType and metadata.
-// =====================================================
+const notifications = [
+  "New renovation project posted in Nanaimo",
+  "Owner viewed your profile",
+  "Bid deadline approaching for duplex framing package"
+];
+
 async function startCheckout(paymentType, metadata = {}) {
   const response = await fetch("/api/create-checkout-session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ paymentType, ...metadata })
   });
-
   const data = await response.json();
-
-  if (data.url) {
-    window.location.href = data.url;
-  } else {
-    alert(data.error || "Payment could not start.");
-  }
+  if (data.url) window.location.href = data.url;
+  else alert(data.error || "Payment could not start.");
 }
 
-// =====================================================
-// SMALL UI BUILDING BLOCKS
-// =====================================================
-function AppButton({ children, className = "", type = "button", onClick, variant = "solid", disabled = false }) {
-  const variantClass =
-    variant === "outline"
-      ? "border border-slate-300 bg-white text-slate-900 hover:bg-slate-100"
-      : "bg-slate-950 text-white hover:bg-slate-800";
-
-  return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      className={`inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${variantClass} ${className}`}
-    >
-      {children}
-    </button>
-  );
+function Button({ children, className = "", variant = "primary", onClick, type = "button", disabled = false }) {
+  const styles = variant === "secondary"
+    ? "bg-white text-slate-950 border border-slate-200 hover:bg-slate-50"
+    : variant === "ghost"
+    ? "bg-transparent text-slate-700 hover:bg-slate-100"
+    : "bg-slate-950 text-white hover:bg-slate-800";
+  return <button type={type} disabled={disabled} onClick={onClick} className={`rounded-2xl px-5 py-3 text-sm font-bold transition disabled:opacity-50 ${styles} ${className}`}>{children}</button>;
 }
 
 function Card({ children, className = "" }) {
-  return <div className={`rounded-3xl bg-white shadow-xl ${className}`}>{children}</div>;
+  return <div className={`rounded-3xl border border-slate-100 bg-white shadow-xl ${className}`}>{children}</div>;
 }
 
-function StatCard({ emoji, label, value }) {
+function Badge({ children, tone = "slate" }) {
+  const tones = { slate: "bg-slate-100 text-slate-700", green: "bg-emerald-100 text-emerald-700", blue: "bg-blue-100 text-blue-700", purple: "bg-purple-100 text-purple-700", amber: "bg-amber-100 text-amber-700" };
+  return <span className={`rounded-full px-3 py-1 text-xs font-bold ${tones[tone]}`}>{children}</span>;
+}
+
+function Modal({ title, children, onClose }) {
   return (
-    <Card className="bg-white/90">
-      <div className="flex items-center gap-4 p-5">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-2xl text-white">{emoji}</div>
-        <div>
-          <p className="text-sm text-slate-500">{label}</p>
-          <p className="text-2xl font-bold text-slate-950">{value}</p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="mb-5 flex items-center justify-between gap-4">
+          <h3 className="text-2xl font-black text-slate-950">{title}</h3>
+          <button onClick={onClose} className="rounded-full bg-slate-100 px-4 py-2 font-bold text-slate-700">×</button>
         </div>
+        {children}
       </div>
-    </Card>
-  );
-}
-
-function SectionHeader({ eyebrow, title, description }) {
-  return (
-    <div className="mb-6">
-      <p className="text-sm uppercase tracking-[0.25em] text-slate-500">{eyebrow}</p>
-      <h2 className="mt-2 text-4xl font-black text-slate-950">{title}</h2>
-      {description ? <p className="mt-2 max-w-3xl text-slate-600">{description}</p> : null}
     </div>
   );
 }
 
-// =====================================================
-// AUTHENTICATION
-// Existing Supabase auth retained.
-// =====================================================
-function AuthPanel({ onMessage }) {
-  const [mode, setMode] = useState("signin");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [role, setRole] = useState("project_owner");
-  const [loading, setLoading] = useState(false);
+function Progress({ value }) {
+  return <div className="h-3 rounded-full bg-slate-100"><div className="h-3 rounded-full bg-emerald-500" style={{ width: `${value}%` }} /></div>;
+}
 
-  async function handleAuth(event) {
-    event.preventDefault();
-    setLoading(true);
-
-    if (!email.trim() || !password.trim()) {
-      onMessage("Please enter both email and password.");
-      setLoading(false);
-      return;
-    }
-
-    if (mode === "signup") {
-      const { error } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-        options: { data: { role } }
-      });
-
-      if (error) {
-        onMessage(`Signup error: ${error.message}`);
-      } else {
-        onMessage("Signup successful. Complete human verification when you are ready to activate full marketplace access.");
-      }
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-      onMessage(error ? `Login error: ${error.message}` : "Login successful.");
-    }
-
-    setLoading(false);
-  }
-
+function Header({ user, onLogout, view, setView }) {
+  const nav = ["Home", "Projects", "Contractor", "Owner", "Messages", "Admin"];
   return (
-    <Card>
-      <form onSubmit={handleAuth} className="p-6">
-        <p className="text-sm uppercase tracking-[0.25em] text-slate-500">Account</p>
-        <h3 className="mt-2 text-2xl font-black text-slate-950">{mode === "signup" ? "Create your account" : "Log in to continue"}</h3>
-        <p className="mt-2 text-sm text-slate-500">Sign in to post projects, bid, manage profiles, and unlock advanced marketplace features.</p>
-
-        <div className="mt-5 grid gap-3">
-          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Email address" />
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Password" />
-
-          {mode === "signup" ? (
-            <select value={role} onChange={(event) => setRole(event.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900">
-              <option value="project_owner">Project Owner</option>
-              <option value="contractor">Contractor</option>
-              <option value="supplier">Supplier / Advertiser</option>
-            </select>
-          ) : null}
-
-          <AppButton type="submit" className="bg-emerald-600 hover:bg-emerald-700">{loading ? "Please wait..." : mode === "signup" ? "Create account" : "Log in"}</AppButton>
-
-          <button type="button" onClick={() => setMode(mode === "signup" ? "signin" : "signup")} className="text-sm font-semibold text-slate-700 hover:text-slate-950">
-            {mode === "signup" ? "Already have an account? Log in" : "Need an account? Sign up"}
-          </button>
-        </div>
-      </form>
-    </Card>
+    <header className="sticky top-0 z-40 border-b border-white/10 bg-slate-950/95 backdrop-blur text-white">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-4">
+        <button onClick={() => setView("Home")} className="flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white font-black text-slate-950">PB</div>
+          <div className="text-left"><p className="font-black">ProjectBid</p><p className="text-xs text-slate-400">Contractor Marketplace</p></div>
+        </button>
+        <nav className="hidden gap-2 lg:flex">
+          {nav.map((item) => <button key={item} onClick={() => setView(item)} className={`rounded-2xl px-4 py-2 text-sm font-semibold ${view === item ? "bg-white text-slate-950" : "text-slate-300 hover:bg-white/10"}`}>{item}</button>)}
+        </nav>
+        {user ? <Button onClick={onLogout} variant="secondary">Logout</Button> : <Button onClick={() => setView("Onboarding")} variant="secondary">Get Started</Button>}
+      </div>
+    </header>
   );
 }
 
-// =====================================================
-// HUMAN VERIFICATION
-// Replaces old $1 enrollment fee with $5 one-time verification.
-// =====================================================
-function HumanVerificationPanel({ user, profile, onMessage }) {
-  const isVerified = Boolean(profile?.is_verified);
-
-  function handleVerification() {
-    if (!user) {
-      onMessage("Please log in before completing human verification.");
-      return;
-    }
-
-    startCheckout(PLATFORM_CONFIG.verification.paymentType, { userId: user.id });
-  }
-
+function HomePage({ setView }) {
   return (
-    <Card className="border border-emerald-100 bg-gradient-to-br from-white to-emerald-50">
-      <div className="p-6">
-        <div className="flex items-start gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-2xl text-emerald-700">✅</div>
+    <div>
+      <section className="relative overflow-hidden bg-slate-950 text-white">
+        <div className="absolute inset-0 opacity-25 bg-[url('https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=1800&q=80')] bg-cover bg-center" />
+        <div className="relative mx-auto grid max-w-7xl gap-10 px-6 py-24 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
           <div>
-            <h3 className="text-xl font-bold text-slate-950">Human verification</h3>
-            <p className="mt-1 text-sm text-slate-500">{isVerified ? "Your account is verified." : PLATFORM_CONFIG.verification.description}</p>
+            <Badge tone="green">Trusted project bidding</Badge>
+            <h1 className="mt-6 max-w-3xl text-5xl font-black leading-tight md:text-7xl">Find qualified professionals. Compare bids. Build with confidence.</h1>
+            <p className="mt-6 max-w-2xl text-lg text-slate-300">A clean contractor marketplace for owners, contractors, and suppliers, with project posting, contractor profiles, bid management, gated lead exchange, and optional visibility tools.</p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row"><Button onClick={() => setView("Onboarding")} className="bg-emerald-500 text-slate-950 hover:bg-emerald-400">Start Now</Button><Button onClick={() => setView("Projects")} variant="secondary">Browse Projects</Button></div>
           </div>
+          <Card className="overflow-hidden bg-white/10 text-white backdrop-blur">
+            <div className="h-64 bg-[url('https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=1200&q=80')] bg-cover bg-center" />
+            <div className="grid gap-4 p-6 sm:grid-cols-3">
+              <div><p className="text-3xl font-black">3</p><p className="text-sm text-slate-300">Free monthly bids</p></div>
+              <div><p className="text-3xl font-black">4</p><p className="text-sm text-slate-300">Contractor tiers</p></div>
+              <div><p className="text-3xl font-black">Safe</p><p className="text-sm text-slate-300">Lead exchange</p></div>
+            </div>
+          </Card>
         </div>
-        <AppButton onClick={handleVerification} disabled={isVerified} className="mt-5 bg-emerald-600 hover:bg-emerald-700">
-          {isVerified ? "Verified" : "Complete verification"}
-        </AppButton>
-      </div>
-    </Card>
+      </section>
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 py-12 md:grid-cols-3">
+        {["Post a project", "Compare professionals", "Unlock contact when ready"].map((title, index) => <Card key={title} className="p-6"><div className="text-3xl">{["🏗", "👷", "🔒"][index]}</div><h3 className="mt-4 text-xl font-black">{title}</h3><p className="mt-2 text-slate-600">A marketplace workflow that keeps the experience focused on project quality, trust, and professional fit.</p></Card>)}
+      </section>
+    </div>
   );
 }
 
-// =====================================================
-// CONTRACTOR TIERS
-// UI and logic use central config. Free tier is enforced in bid form.
-// =====================================================
-function ContractorTiersPanel({ user, profile, onMessage }) {
-  const activeTier = profile?.contractor_tier || "free";
-
-  function chooseTier(tier) {
-    if (!user) {
-      onMessage("Please log in before selecting a contractor tier.");
-      return;
-    }
-
-    if (!tier.paymentType) {
-      onMessage("Free Contractor tier active. Free contractors can bid on up to 3 projects per month.");
-      return;
-    }
-
-    startCheckout(tier.paymentType, { userId: user.id, tier: tier.key });
+function OnboardingFlow({ user, onMessage }) {
+  const [step, setStep] = useState(1);
+  const [accountType, setAccountType] = useState("contractor");
+  const progress = step * 20;
+  function verify() {
+    if (!user) return onMessage("Create or log into an account before paying verification.");
+    startCheckout(CONFIG.verification.paymentType, { userId: user.id });
   }
-
   return (
-    <section className="mt-8">
-      <SectionHeader
-        eyebrow="Professional tools"
-        title="Choose how you want to compete"
-        description="Start free. Upgrade only when you need more bids, stronger visibility, instant local project notifications, or wider service territory."
-      />
-      <div className="grid gap-5 lg:grid-cols-4">
-        {Object.values(PLATFORM_CONFIG.contractorTiers).map((tier) => {
-          const isActive = activeTier === tier.key;
-          return (
-            <Card key={tier.key} className={`flex flex-col border p-6 ${isActive ? "border-emerald-300 ring-2 ring-emerald-100" : "border-slate-100"}`}>
-              <div>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{tier.badge}</span>
-                <h3 className="mt-4 text-xl font-black text-slate-950">{tier.name}</h3>
-                <p className="mt-2 text-2xl font-black text-slate-950">{tier.priceLabel}</p>
-              </div>
-              <ul className="mt-5 flex-1 space-y-3 text-sm text-slate-700">
-                {tier.features.map((feature) => <li key={feature}>✓ {feature}</li>)}
-              </ul>
-              <AppButton onClick={() => chooseTier(tier)} disabled={isActive} className="mt-6">
-                {isActive ? "Current plan" : tier.paymentType ? "Upgrade" : "Use free tier"}
-              </AppButton>
-            </Card>
-          );
-        })}
-      </div>
+    <section className="mx-auto max-w-5xl px-6 py-12">
+      <Card className="p-8">
+        <div className="mb-8"><Badge tone="green">Step {step} of 5</Badge><h2 className="mt-4 text-4xl font-black">Welcome to ProjectBid</h2><p className="mt-2 text-slate-600">Complete onboarding to personalize your dashboard.</p><div className="mt-5"><Progress value={progress} /></div></div>
+        {step === 1 && <div><h3 className="text-2xl font-black">Build smarter with trusted marketplace tools.</h3><p className="mt-3 text-slate-600">Owners post projects. Contractors bid. Leads stay gated until both sides are ready.</p></div>}
+        {step === 2 && <div className="grid gap-4 md:grid-cols-2">{["owner", "contractor"].map((type) => <button key={type} onClick={() => setAccountType(type)} className={`rounded-3xl border p-6 text-left ${accountType === type ? "border-emerald-400 bg-emerald-50" : "border-slate-200"}`}><div className="text-3xl">{type === "owner" ? "🏠" : "👷"}</div><h3 className="mt-3 text-xl font-black capitalize">{type}</h3><p className="mt-2 text-slate-600">{type === "owner" ? "Post projects and compare contractor bids." : "Create a profile and bid on projects."}</p></button>)}</div>}
+        {step === 3 && <div><h3 className="text-2xl font-black">Human verification</h3><p className="mt-2 text-slate-600">A one-time verification helps reduce fake accounts and protects the marketplace.</p><Button onClick={verify} className="mt-5 bg-emerald-600 hover:bg-emerald-700">Complete Verification</Button></div>}
+        {step === 4 && <PaymentPreview title="Verification payment" description="Stripe Checkout opens securely when you continue." amount="One-time verification" />}
+        {step === 5 && <div className="text-center"><div className="text-6xl">✅</div><h3 className="mt-4 text-3xl font-black">You are ready</h3><p className="mt-2 text-slate-600">Continue to your dashboard.</p></div>}
+        <div className="mt-8 flex justify-between"><Button variant="secondary" disabled={step === 1} onClick={() => setStep(step - 1)}>Back</Button><Button onClick={() => setStep(Math.min(step + 1, 5))}>{step === 5 ? "Go to dashboard" : "Continue"}</Button></div>
+      </Card>
     </section>
   );
 }
 
-// =====================================================
-// FEATURED LISTINGS + ADS
-// Hidden until users request promotion tools.
-// =====================================================
-function PromotionPanel({ title, description, options, user, onMessage }) {
-  function startPromotion(option) {
-    if (!user) {
-      onMessage("Please log in before purchasing visibility tools.");
-      return;
-    }
-
-    startCheckout(option.paymentType, { userId: user.id });
-  }
-
-  return (
-    <Card className="p-6">
-      <p className="text-sm uppercase tracking-[0.25em] text-slate-500">Optional visibility</p>
-      <h3 className="mt-2 text-2xl font-black text-slate-950">{title}</h3>
-      <p className="mt-2 text-sm text-slate-500">{description}</p>
-      <div className="mt-5 grid gap-3">
-        {options.map((option) => (
-          <div key={option.key} className="rounded-2xl border bg-slate-50 p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="font-bold text-slate-950">{option.label}</p>
-                <p className="text-sm text-slate-600">{option.description}</p>
-              </div>
-              <AppButton onClick={() => startPromotion(option)} className="shrink-0">Purchase</AppButton>
-            </div>
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
+function PaymentPreview({ title, description, amount }) {
+  return <Card className="border-emerald-100 bg-emerald-50 p-5"><h4 className="font-black text-slate-950">{title}</h4><p className="mt-1 text-slate-600">{description}</p><p className="mt-4 text-sm font-bold text-emerald-700">{amount}</p></Card>;
 }
 
-// =====================================================
-// LEAD UNLOCK GATING
-// UI blocks sensitive exchange until both sides have paid.
-// Backend tables can later track owner_paid and contractor_paid per lead.
-// =====================================================
-function LeadUnlockPanel({ user, onMessage }) {
-  function payLeadUnlock(role) {
-    if (!user) {
-      onMessage("Please log in before unlocking direct contact exchange.");
-      return;
-    }
-
-    const paymentType = role === "contractor" ? PLATFORM_CONFIG.leadUnlock.contractor.paymentType : PLATFORM_CONFIG.leadUnlock.owner.paymentType;
-    startCheckout(paymentType, { userId: user.id, leadRole: role });
+function PricingGrid({ user, profile, onMessage }) {
+  const activeTier = profile?.contractor_tier || "free";
+  function chooseTier(tier) {
+    if (!user) return onMessage("Please log in before selecting a tier.");
+    if (!tier.paymentType) return onMessage("Free tier selected. You can bid on 3 projects per month.");
+    startCheckout(tier.paymentType, { userId: user.id, tier: tier.key });
   }
-
   return (
-    <Card className="border border-blue-100 bg-gradient-to-br from-white to-blue-50 p-6">
-      <p className="text-sm uppercase tracking-[0.25em] text-blue-700">Lead unlock</p>
-      <h3 className="mt-2 text-2xl font-black text-slate-950">Connect safely when ready</h3>
-      <p className="mt-2 text-slate-600">Phone numbers, email addresses, documents, and contract files stay gated until both sides unlock the lead.</p>
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <AppButton onClick={() => payLeadUnlock("contractor")} className="bg-blue-700 hover:bg-blue-800">Contractor unlock</AppButton>
-        <AppButton onClick={() => payLeadUnlock("owner")} className="bg-emerald-700 hover:bg-emerald-800">Owner unlock</AppButton>
+    <div>
+      <SectionTitle eyebrow="Contractor subscriptions" title="Choose the right plan" description="The free tier gets you started. Paid tiers unlock more visibility, trust, notifications, and geographic reach." />
+      <div className="grid gap-5 lg:grid-cols-4">
+        {CONFIG.contractorTiers.map((tier) => <Card key={tier.key} className={`relative flex flex-col p-6 ${tier.recommended ? "ring-2 ring-emerald-400" : ""}`}>
+          {tier.recommended && <span className="absolute right-4 top-4 rounded-full bg-emerald-500 px-3 py-1 text-xs font-bold text-white">Recommended</span>}
+          <Badge tone={tier.key === "verified" ? "blue" : tier.key === "universal" ? "purple" : "slate"}>{tier.badge}</Badge>
+          <h3 className="mt-4 text-2xl font-black">{tier.name}</h3><p className="mt-2"><span className="text-3xl font-black">{tier.price}</span><span className="text-slate-500">{tier.period}</span></p>
+          <ul className="mt-5 flex-1 space-y-3 text-sm text-slate-700">{tier.features.map((feature) => <li key={feature}>✓ {feature}</li>)}</ul>
+          <Button className="mt-6" disabled={activeTier === tier.key} onClick={() => chooseTier(tier)}>{activeTier === tier.key ? "Current Plan" : tier.paymentType ? "Upgrade" : "Use Free"}</Button>
+        </Card>)}
       </div>
-    </Card>
-  );
-}
-
-// =====================================================
-// BIDDING
-// Enforces tier privileges in UI + logic.
-// Free contractors are limited to 3 bids/month.
-// Universal contractors may bid outside local territory.
-// =====================================================
-function BidForm({ project, user, profile, monthlyBidCount, onMessage, onBidSaved }) {
-  const [bidAmount, setBidAmount] = useState("");
-  const [timeline, setTimeline] = useState("");
-  const [proposal, setProposal] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const tierKey = profile?.contractor_tier || "free";
-  const tier = PLATFORM_CONFIG.contractorTiers[tierKey] || DEFAULT_TIER;
-  const isVerified = Boolean(profile?.is_verified);
-  const remainingFreeBids = tier.monthlyBidLimit === Infinity ? Infinity : Math.max(tier.monthlyBidLimit - monthlyBidCount, 0);
-  const canSubmitBid = isVerified && (tier.monthlyBidLimit === Infinity || monthlyBidCount < tier.monthlyBidLimit);
-
-  async function submitBid(event) {
-    event.preventDefault();
-
-    if (!user) {
-      onMessage("Please log in before submitting a bid.");
-      return;
-    }
-
-    if (!isVerified) {
-      onMessage("Please complete human verification before submitting bids.");
-      return;
-    }
-
-    if (!canSubmitBid) {
-      onMessage("Free Contractor bid limit reached. Upgrade to Pro for unlimited bids.");
-      return;
-    }
-
-    if (!bidAmount.trim() || !timeline.trim()) {
-      onMessage("Please enter a bid amount and timeline.");
-      return;
-    }
-
-    setLoading(true);
-
-    const { error } = await supabase.from("bids").insert([
-      {
-        project_id: project.id,
-        contractor_id: user.id,
-        contractor_email: user.email,
-        company_name: profile?.company_name || user.email,
-        bid_amount: bidAmount.trim(),
-        timeline: timeline.trim(),
-        proposal: proposal.trim(),
-        status: "pending"
-      }
-    ]);
-
-    setLoading(false);
-
-    if (error) {
-      onMessage(`Could not submit bid: ${error.message}`);
-      return;
-    }
-
-    setBidAmount("");
-    setTimeline("");
-    setProposal("");
-    onMessage("Bid submitted successfully.");
-    onBidSaved();
-  }
-
-  return (
-    <form onSubmit={submitBid} className="mt-5 rounded-2xl border bg-slate-50 p-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <h5 className="font-bold text-slate-950">Submit your bid</h5>
-        <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-          {tier.monthlyBidLimit === Infinity ? "Unlimited bids" : `${remainingFreeBids} free bid(s) left this month`}
-        </span>
-      </div>
-
-      {!isVerified ? <p className="mt-3 rounded-2xl bg-amber-50 p-3 text-sm text-amber-800">Complete human verification before bidding.</p> : null}
-
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <input value={bidAmount} onChange={(event) => setBidAmount(event.target.value)} className="rounded-2xl border bg-white p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Bid amount, e.g. $42,500" />
-        <input value={timeline} onChange={(event) => setTimeline(event.target.value)} className="rounded-2xl border bg-white p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Timeline, e.g. 8 weeks" />
-      </div>
-      <textarea value={proposal} onChange={(event) => setProposal(event.target.value)} className="mt-3 min-h-24 w-full rounded-2xl border bg-white p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Proposal details, experience, materials, exclusions, warranty, and notes" />
-      <AppButton type="submit" disabled={!canSubmitBid || loading} className="mt-3 bg-blue-700 hover:bg-blue-800">{loading ? "Submitting..." : "Submit bid"}</AppButton>
-    </form>
-  );
-}
-
-function ProjectCard({ project, user, profile, monthlyBidCount, onMessage, onBidSaved }) {
-  const bids = project.bids || [];
-
-  async function acceptBid(bid) {
-    if (!user) {
-      onMessage("Please log in before accepting a bid.");
-      return;
-    }
-
-    const { error: bidError } = await supabase.from("bids").update({ status: "rejected" }).eq("project_id", project.id);
-    if (bidError) {
-      onMessage(`Could not update other bids: ${bidError.message}`);
-      return;
-    }
-
-    const { error: acceptedBidError } = await supabase.from("bids").update({ status: "accepted" }).eq("id", bid.id);
-    if (acceptedBidError) {
-      onMessage(`Could not accept bid: ${acceptedBidError.message}`);
-      return;
-    }
-
-    const { error: projectError } = await supabase
-      .from("projects")
-      .update({ accepted_bid_id: bid.id, accepted_contractor_email: bid.contractor_email, status: "Bid Accepted" })
-      .eq("id", project.id);
-
-    if (projectError) {
-      onMessage(`Could not update project: ${projectError.message}`);
-      return;
-    }
-
-    const { data: contractData, error: contractError } = await supabase
-      .from("contracts")
-      .insert([{ project_id: project.id, bid_id: bid.id, owner_email: project.owner, contractor_email: bid.contractor_email, status: "pending_payment" }])
-      .select();
-
-    if (contractError) {
-      onMessage(`Bid accepted, but contract was not created: ${contractError.message}`);
-      return;
-    }
-
-    onMessage("Bid accepted. Contract created. Starting finalization payment.");
-    await onBidSaved();
-    startCheckout("finalization", { contractId: contractData?.[0]?.id || null, userId: user.id });
-  }
-
-  return (
-    <Card className="overflow-hidden border border-slate-100">
-      <div className="border-b bg-gradient-to-br from-slate-950 to-slate-800 p-6 text-white">
-        <div className="flex justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.25em] text-slate-300">{project.category}</p>
-            <h3 className="mt-2 text-2xl font-bold">{project.title}</h3>
-          </div>
-          <span className="h-fit rounded-full bg-emerald-400/20 px-3 py-1 text-sm text-emerald-200">{project.status}</span>
-        </div>
-        <p className="mt-3 text-slate-300">{project.description}</p>
-        <div className="mt-5 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
-          <div>📍 {project.location}</div>
-          <div>💵 {project.budget}</div>
-          <div>🏢 {project.owner}</div>
-        </div>
-      </div>
-
-      <div className="p-6">
-        <div className="flex items-center justify-between">
-          <h4 className="font-semibold text-slate-950">Contractor bids</h4>
-          <span className="text-sm text-slate-500">{bids.length} bid{bids.length === 1 ? "" : "s"}</span>
-        </div>
-
-        <div className="mt-4 space-y-3">
-          {bids.length > 0 ? (
-            bids.map((bid, index) => (
-              <div key={`${bid.contractor_email || bid.company_name}-${index}`} className="flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="font-semibold text-slate-900">{bid.company_name || bid.contractor_email}</p>
-                  <p className="mt-1 text-sm text-slate-500">Status: {bid.status}</p>
-                  {bid.proposal ? <p className="mt-2 text-sm text-slate-600">{bid.proposal}</p> : null}
-                </div>
-                <div className="flex flex-col gap-3 sm:items-end">
-                  <div className="flex gap-4 text-sm text-slate-700">
-                    <span>{bid.bid_amount}</span>
-                    <span>⏱ {bid.timeline}</span>
-                  </div>
-                  <AppButton onClick={() => acceptBid(bid)} className="bg-emerald-600 px-4 py-2 hover:bg-emerald-700">Accept Bid</AppButton>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">No bids yet. Contractors can submit the first bid.</div>
-          )}
-        </div>
-
-        <BidForm project={project} user={user} profile={profile} monthlyBidCount={monthlyBidCount} onMessage={onMessage} onBidSaved={onBidSaved} />
-      </div>
-    </Card>
-  );
-}
-
-// =====================================================
-// PROJECT POSTING
-// Existing project creation retained.
-// =====================================================
-function ProjectOwnerPanel({ onAddProject, user }) {
-  const [project, setProject] = useState({ title: "", location: "", budget: "", description: "" });
-
-  function updateField(field, value) {
-    setProject((current) => ({ ...current, [field]: value }));
-  }
-
-  function handleSubmit(event) {
-    event.preventDefault();
-    if (!project.title.trim() || !project.location.trim()) return;
-
-    onAddProject({
-      title: project.title.trim(),
-      owner: user?.email || "Project Owner",
-      location: project.location.trim(),
-      budget: project.budget.trim() || "Budget to be confirmed",
-      category: "New Project",
-      description: project.description.trim() || "Project details will be added soon.",
-      status: "Open"
-    });
-
-    setProject({ title: "", location: "", budget: "", description: "" });
-  }
-
-  return (
-    <Card>
-      <form onSubmit={handleSubmit} className="p-6">
-        <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100 text-2xl text-blue-700">➕</div>
-          <div>
-            <h3 className="text-xl font-bold text-slate-950">List a project</h3>
-            <p className="text-sm text-slate-500">Post your project and receive competitive bids.</p>
-          </div>
-        </div>
-        <div className="mt-5 grid gap-3">
-          <input value={project.title} onChange={(event) => updateField("title", event.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Project title" />
-          <input value={project.location} onChange={(event) => updateField("location", event.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Location" />
-          <input value={project.budget} onChange={(event) => updateField("budget", event.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Budget range" />
-          <textarea value={project.description} onChange={(event) => updateField("description", event.target.value)} className="min-h-28 rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Describe the scope, drawings, timeline, permits, and site conditions" />
-          <AppButton type="submit" className="bg-blue-700 hover:bg-blue-800">Publish project</AppButton>
-        </div>
-      </form>
-    </Card>
-  );
-}
-
-// =====================================================
-// CONTRACTOR PROFILE
-// Existing profile retained and extended with tier awareness.
-// =====================================================
-function ContractorProfilePanel({ user, profile, onMessage, onProfileSaved }) {
-  const [form, setForm] = useState({ company_name: "", expertise: "", years_experience: "", certifications: "", portfolio: "" });
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (profile) {
-      setForm({
-        company_name: profile.company_name || "",
-        expertise: profile.expertise || "",
-        years_experience: profile.years_experience || "",
-        certifications: profile.certifications || "",
-        portfolio: profile.portfolio || ""
-      });
-    }
-  }, [profile]);
-
-  function updateField(field, value) {
-    setForm((current) => ({ ...current, [field]: value }));
-  }
-
-  async function saveProfile(event) {
-    event.preventDefault();
-    if (!user) return;
-
-    setLoading(true);
-
-    const profileData = {
-      id: user.id,
-      email: user.email,
-      role: "contractor",
-      contractor_tier: profile?.contractor_tier || "free",
-      company_name: form.company_name,
-      expertise: form.expertise,
-      years_experience: form.years_experience ? Number(form.years_experience) : null,
-      certifications: form.certifications,
-      portfolio: form.portfolio,
-      updated_at: new Date().toISOString()
-    };
-
-    const { error } = await supabase.from("profiles").upsert(profileData, { onConflict: "id" }).select();
-    setLoading(false);
-
-    if (error) {
-      onMessage(`Could not save profile: ${error.message}`);
-      return;
-    }
-
-    onMessage("Contractor profile saved successfully.");
-    onProfileSaved();
-  }
-
-  const tier = PLATFORM_CONFIG.contractorTiers[profile?.contractor_tier || "free"] || DEFAULT_TIER;
-
-  return (
-    <Card>
-      <form onSubmit={saveProfile} className="p-6">
-        <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-purple-100 text-2xl text-purple-700">👷</div>
-          <div>
-            <h3 className="text-xl font-bold text-slate-950">Contractor profile</h3>
-            <p className="text-sm text-slate-500">Current plan: {tier.name}. Badge: {tier.badge}.</p>
-          </div>
-        </div>
-        <div className="mt-5 grid gap-3">
-          <input value={form.company_name} onChange={(event) => updateField("company_name", event.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Company name" />
-          <input value={form.expertise} onChange={(event) => updateField("expertise", event.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Expertise, e.g. framing, plumbing, renovation" />
-          <input type="number" value={form.years_experience} onChange={(event) => updateField("years_experience", event.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Years of experience" />
-          <textarea value={form.certifications} onChange={(event) => updateField("certifications", event.target.value)} className="min-h-24 rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Certifications, insurance, license information" />
-          <textarea value={form.portfolio} onChange={(event) => updateField("portfolio", event.target.value)} className="min-h-28 rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Past projects, references, portfolio notes" />
-          <AppButton type="submit" className="bg-purple-700 hover:bg-purple-800">{loading ? "Saving..." : "Save contractor profile"}</AppButton>
-        </div>
-      </form>
-    </Card>
-  );
-}
-
-// =====================================================
-// MAIN APP
-// Existing Supabase data flow retained. Profile and bid counts added.
-// =====================================================
-function App() {
-  const [projects, setProjects] = useState([]);
-  const [query, setQuery] = useState("");
-  const [message, setMessage] = useState("");
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [monthlyBidCount, setMonthlyBidCount] = useState(0);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [showProfessionalTools, setShowProfessionalTools] = useState(false);
-  const [showLeadUnlock, setShowLeadUnlock] = useState(false);
-  const [showPromotionTools, setShowPromotionTools] = useState(false);
-
-  useEffect(() => {
-    fetchProjects();
-    getCurrentUser();
-
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      const nextUser = session?.user || null;
-      setUser(nextUser);
-      if (nextUser) {
-        fetchProfile(nextUser.id);
-        fetchMonthlyBidCount(nextUser.id);
-      } else {
-        setProfile(null);
-        setMonthlyBidCount(0);
-      }
-    });
-
-    return () => listener.subscription.unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const paymentStatus = params.get("payment");
-    if (paymentStatus === "success") setMessage("Payment successful. Thank you.");
-    if (paymentStatus === "cancelled") setMessage("Payment was cancelled.");
-  }, []);
-
-  async function getCurrentUser() {
-    const { data } = await supabase.auth.getUser();
-    const currentUser = data?.user || null;
-    setUser(currentUser);
-    if (currentUser) {
-      await fetchProfile(currentUser.id);
-      await fetchMonthlyBidCount(currentUser.id);
-    }
-    setAuthLoading(false);
-  }
-
-  async function fetchProfile(userId) {
-    const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
-    if (!error) setProfile(data || null);
-  }
-
-  async function fetchMonthlyBidCount(userId) {
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
-
-    const { count, error } = await supabase
-      .from("bids")
-      .select("id", { count: "exact", head: true })
-      .eq("contractor_id", userId)
-      .gte("created_at", startOfMonth.toISOString());
-
-    if (!error) setMonthlyBidCount(count || 0);
-  }
-
-  async function fetchProjects() {
-    const { data: projectData, error: projectError } = await supabase.from("projects").select("*").order("created_at", { ascending: false });
-    if (projectError) {
-      setMessage(`Supabase error: ${projectError.message}`);
-      return;
-    }
-
-    const { data: bidData, error: bidError } = await supabase.from("bids").select("*").order("created_at", { ascending: false });
-    if (bidError) {
-      setMessage(`Bid loading error: ${bidError.message}`);
-      return;
-    }
-
-    setProjects(projectData.map((project) => ({ ...project, bids: bidData.filter((bid) => bid.project_id === project.id) })));
-  }
-
-  const filteredProjects = useMemo(() => {
-    const searchTerm = query.trim().toLowerCase();
-    if (!searchTerm) return projects;
-    return projects.filter((project) => [project.title, project.location, project.category, project.description, project.owner].join(" ").toLowerCase().includes(searchTerm));
-  }, [projects, query]);
-
-  const totalBids = projects.reduce((sum, project) => sum + (project.bids || []).length, 0);
-
-  async function handleAddProject(newProject) {
-    if (!user) {
-      setMessage("Please log in before listing a project.");
-      return;
-    }
-
-    const { error } = await supabase.from("projects").insert([newProject]);
-    if (error) {
-      setMessage(`Could not save project: ${error.message}`);
-      return;
-    }
-
-    await fetchProjects();
-    setMessage("Project saved successfully.");
-  }
-
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    setUser(null);
-    setProfile(null);
-    setMonthlyBidCount(0);
-    setMessage("You have logged out.");
-  }
-
-  return (
-    <div className="min-h-screen bg-slate-100 text-slate-950">
-      <header className="relative overflow-hidden bg-slate-950 text-white">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_white,_transparent_30%)] opacity-20" />
-        <div className="relative mx-auto max-w-7xl px-6 py-8">
-          <nav className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white font-black text-slate-950">PB</div>
-              <div>
-                <p className="text-xl font-bold">ProjectBid</p>
-                <p className="text-xs text-slate-400">Trusted project bidding for professionals</p>
-              </div>
-            </div>
-            <div className="hidden items-center gap-6 text-sm text-slate-300 md:flex">
-              <a href="#projects" className="hover:text-white">Projects</a>
-              <a href="#enroll" className="hover:text-white">Post</a>
-              <a href="#profile" className="hover:text-white">Profile</a>
-              <a href="#tools" className="hover:text-white">Tools</a>
-            </div>
-            {user ? <button onClick={handleLogout} className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-slate-200">Logout</button> : <a href="#account" className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-slate-200">Login</a>}
-          </nav>
-
-          <div className="grid items-center gap-12 py-16 lg:grid-cols-2">
-            <div>
-              <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm text-slate-200">🏗 Projects, professionals, and trusted bids</p>
-              <h1 className="mt-6 text-5xl font-black leading-tight md:text-6xl">Find the right professional for every project.</h1>
-              <p className="mt-6 max-w-xl text-lg text-slate-300">Owners can post projects, compare qualified bids, review contractor profiles, and move toward a contract with confidence.</p>
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <a href="#enroll" className="rounded-2xl bg-emerald-500 px-7 py-3 text-center font-bold text-slate-950 hover:bg-emerald-600">Post a project</a>
-                <a href="#projects" className="rounded-2xl border border-white/30 px-7 py-3 text-center font-bold text-white hover:bg-white hover:text-slate-950">Browse projects</a>
-              </div>
-            </div>
-
-            <Card className="overflow-hidden border border-white/10 bg-white/10 shadow-2xl backdrop-blur">
-              <div className="grid gap-0 md:grid-cols-2">
-                <div className="min-h-[340px] bg-[url('https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=900&q=80')] bg-cover bg-center" />
-                <div className="p-6">
-                  <div className="rounded-3xl bg-white p-5 text-slate-950">
-                    <p className="text-sm text-slate-500">Marketplace workflow</p>
-                    <p className="mt-2 text-3xl font-black">Post. Compare. Connect.</p>
-                    <p className="mt-3 text-sm text-slate-600">A cleaner way to find qualified contractors and manage project bids.</p>
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-4">
-                    <div className="rounded-3xl bg-slate-900 p-5"><p className="text-sm text-slate-400">Profiles</p><p className="text-3xl font-black">✓</p></div>
-                    <div className="rounded-3xl bg-emerald-500 p-5 text-slate-950"><p className="text-sm text-slate-800">Bid review</p><p className="text-3xl font-black">✓</p></div>
-                  </div>
-                </div>
-              </div>
-            </Card>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-7xl px-6 py-10">
-        <section className="relative z-10 -mt-20 grid gap-4 md:grid-cols-4">
-          <StatCard emoji="🔨" label="Open projects" value={projects.length} />
-          <StatCard emoji="📄" label="Active bids" value={totalBids} />
-          <StatCard emoji="✅" label="Trust layer" value={profile?.is_verified ? "Verified" : "Optional"} />
-          <StatCard emoji="⭐" label="Contractor tier" value={PLATFORM_CONFIG.contractorTiers[profile?.contractor_tier || "free"]?.badge || "Starter"} />
-        </section>
-
-        {message ? <div className="mt-8 rounded-3xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-800">{message}</div> : null}
-
-        <section id="account" className="mt-12">
-          {authLoading ? null : user ? <Card className="p-6"><p className="text-sm text-slate-500">Logged in as</p><p className="mt-1 font-bold text-slate-950">{user.email}</p></Card> : <AuthPanel onMessage={setMessage} />}
-        </section>
-
-        <section id="tools" className="mt-12 grid gap-5 lg:grid-cols-3">
-          <Card className="p-6">
-            <div className="text-3xl">✅</div>
-            <h3 className="mt-4 text-xl font-black text-slate-950">Build trust</h3>
-            <p className="mt-2 text-sm text-slate-600">Complete human verification only when ready for full marketplace access.</p>
-            <div className="mt-5"><HumanVerificationPanel user={user} profile={profile} onMessage={setMessage} /></div>
-          </Card>
-          <Card className="p-6">
-            <div className="text-3xl">👷</div>
-            <h3 className="mt-4 text-xl font-black text-slate-950">Grow professionally</h3>
-            <p className="mt-2 text-sm text-slate-600">Open advanced contractor tools only when you need more visibility or reach.</p>
-            <AppButton onClick={() => setShowProfessionalTools((current) => !current)} className="mt-5">{showProfessionalTools ? "Hide tools" : "Explore tools"}</AppButton>
-          </Card>
-          <Card className="p-6">
-            <div className="text-3xl">🔓</div>
-            <h3 className="mt-4 text-xl font-black text-slate-950">Connect safely</h3>
-            <p className="mt-2 text-sm text-slate-600">Unlock contact exchange only when both sides are ready.</p>
-            <AppButton onClick={() => setShowLeadUnlock((current) => !current)} className="mt-5">{showLeadUnlock ? "Hide unlock" : "Open unlock"}</AppButton>
-          </Card>
-        </section>
-
-        {showLeadUnlock ? <section className="mt-8"><LeadUnlockPanel user={user} onMessage={setMessage} /></section> : null}
-        {showProfessionalTools ? <ContractorTiersPanel user={user} profile={profile} onMessage={setMessage} /> : null}
-
-        <section id="projects" className="mt-12 grid gap-8 lg:grid-cols-[1fr_360px]">
-          <div>
-            <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <SectionHeader eyebrow="Marketplace" title="Available projects" description="Browse active project opportunities and compare bids from professionals." />
-              <div className="relative"><span className="absolute left-4 top-3 text-slate-400">🔎</span><input value={query} onChange={(event) => setQuery(event.target.value)} className="h-12 min-w-[280px] rounded-2xl border bg-white pl-11 pr-4 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Search projects" /></div>
-            </div>
-            <div className="grid gap-6">
-              {filteredProjects.length > 0 ? filteredProjects.map((project) => <ProjectCard key={project.id} project={project} user={user} profile={profile} monthlyBidCount={monthlyBidCount} onMessage={setMessage} onBidSaved={() => { fetchProjects(); if (user) fetchMonthlyBidCount(user.id); }} />) : <Card className="p-8 text-center text-slate-600">No projects match your search.</Card>}
-            </div>
-          </div>
-
-          <aside className="space-y-5">
-            <Card className="overflow-hidden">
-              <div className="h-44 bg-[url('https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&w=900&q=80')] bg-cover bg-center" />
-              <div className="p-6">
-                <p className="text-sm uppercase tracking-[0.25em] text-slate-500">Visibility</p>
-                <h3 className="mt-2 text-2xl font-black text-slate-950">Promote when needed</h3>
-                <p className="mt-2 text-sm text-slate-600">Open featured listings and ads only when you want extra exposure.</p>
-                <AppButton onClick={() => setShowPromotionTools((current) => !current)} className="mt-5">{showPromotionTools ? "Hide promotion" : "Show promotion"}</AppButton>
-              </div>
-            </Card>
-            {showPromotionTools ? <><PromotionPanel title="Featured listings" description="Appear first in search, on the homepage, or in selected cities and categories." options={PLATFORM_CONFIG.featuredListings} user={user} onMessage={setMessage} /><PromotionPanel title="Paid advertisements" description="Purchase ad placement on homepage, contractor dashboard, and project detail pages." options={PLATFORM_CONFIG.advertisements} user={user} onMessage={setMessage} /></> : null}
-          </aside>
-        </section>
-
-        <section id="enroll" className="mt-14 grid gap-8 lg:grid-cols-2">
-          {user ? <ProjectOwnerPanel onAddProject={handleAddProject} user={user} /> : <AuthPanel onMessage={setMessage} />}
-          {user ? <ContractorProfilePanel user={user} profile={profile} onMessage={setMessage} onProfileSaved={() => fetchProfile(user.id)} /> : null}
-        </section>
-      </main>
+      <FeatureComparison />
     </div>
   );
 }
 
-export default App;
+function FeatureComparison() {
+  const rows = ["Monthly bid limit", "Featured badge", "Priority search", "Verified badge", "Instant local notifications", "Cross-province/state bidding"];
+  return <Card className="mt-8 overflow-hidden"><div className="p-6"><h3 className="text-2xl font-black">Feature comparison</h3></div><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50"><tr><th className="p-4">Feature</th>{CONFIG.contractorTiers.map((t) => <th key={t.key} className="p-4">{t.name}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row} className="border-t"><td className="p-4 font-semibold">{row}</td>{CONFIG.contractorTiers.map((tier) => <td key={tier.key} className="p-4">{valueForFeature(row, tier)}</td>)}</tr>)}</tbody></table></div></Card>;
+}
+function valueForFeature(row, tier) {
+  if (row === "Monthly bid limit") return tier.bidLimit === Infinity ? "Unlimited" : tier.bidLimit;
+  if (row === "Featured badge") return ["pro", "verified", "universal"].includes(tier.key) ? "✓" : "—";
+  if (row === "Priority search") return ["pro", "verified", "universal"].includes(tier.key) ? "✓" : "—";
+  if (row === "Verified badge") return ["verified", "universal"].includes(tier.key) ? "✓" : "—";
+  if (row === "Instant local notifications") return ["verified", "universal"].includes(tier.key) ? "✓" : "—";
+  if (row === "Cross-province/state bidding") return tier.key === "universal" ? "✓" : "—";
+  return "—";
+}
+
+function ContractorDashboard({ user, profile, setModal, onMessage }) {
+  const tier = CONFIG.contractorTiers.find((t) => t.key === (profile?.contractor_tier || "free")) || CONFIG.contractorTiers[0];
+  return (
+    <section className="mx-auto max-w-7xl px-6 py-10">
+      <SectionTitle eyebrow="Contractor dashboard" title="Your professional workspace" description="Track profile strength, bids, notifications, recommended projects, and visibility tools." />
+      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+        <div className="space-y-6">
+          <Card className="p-6"><div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between"><div><Badge tone="green">{tier.badge}</Badge><h3 className="mt-3 text-2xl font-black">Current tier: {tier.name}</h3><p className="mt-2 text-slate-600">{tier.bidLimit === Infinity ? "Unlimited bids available" : `${tier.bidLimit} bids per month on Free tier`}</p></div><Button onClick={() => setModal("upgrade")}>Upgrade</Button></div></Card>
+          <Card className="p-6"><h3 className="text-xl font-black">Profile completeness</h3><p className="mt-2 text-slate-600">Complete your profile to improve owner confidence.</p><div className="mt-4"><Progress value={72} /></div></Card>
+          <ProjectRecommendations projects={sampleProjects} />
+        </div>
+        <div className="space-y-6"><NotificationsPanel /><EarningsPanel /><Button className="w-full" onClick={() => setModal("featured")}>Buy featured listing</Button></div>
+      </div>
+      <PricingGrid user={user} profile={profile} onMessage={onMessage} />
+    </section>
+  );
+}
+
+function ProjectRecommendations({ projects }) {
+  return <Card className="p-6"><h3 className="text-xl font-black">Recommended projects</h3><div className="mt-4 grid gap-4">{projects.slice(0, 2).map((p) => <MiniProject key={p.id} project={p} />)}</div></Card>;
+}
+function MiniProject({ project }) { return <div className="rounded-2xl bg-slate-50 p-4"><p className="font-bold">{project.title}</p><p className="mt-1 text-sm text-slate-600">{project.location} • {project.budget}</p></div>; }
+function NotificationsPanel() { return <Card className="p-6"><h3 className="text-xl font-black">Notifications</h3><div className="mt-4 space-y-3">{notifications.map((n) => <div key={n} className="rounded-2xl bg-slate-50 p-3 text-sm">🔔 {n}</div>)}</div></Card>; }
+function EarningsPanel() { return <Card className="p-6"><h3 className="text-xl font-black">Earnings overview</h3><p className="mt-3 text-4xl font-black">$0</p><p className="text-sm text-slate-500">Connect awarded contracts to track future earnings.</p></Card>; }
+
+function ProjectsPage({ user, profile, onMessage, setModal }) {
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("All");
+  const filtered = sampleProjects.filter((p) => (category === "All" || p.category === category) && p.title.toLowerCase().includes(search.toLowerCase()));
+  return (
+    <section className="mx-auto max-w-7xl px-6 py-10">
+      <SectionTitle eyebrow="Projects" title="Browse project opportunities" description="Search, filter, compare, and bid on active projects." />
+      <Card className="mb-6 p-4"><div className="grid gap-3 md:grid-cols-4"><input className="rounded-2xl border p-3" placeholder="Search projects" value={search} onChange={(e) => setSearch(e.target.value)} /><select className="rounded-2xl border p-3" value={category} onChange={(e) => setCategory(e.target.value)}><option>All</option><option>Renovation</option><option>Framing</option><option>Commercial</option></select><select className="rounded-2xl border p-3"><option>Any budget</option><option>Under $50k</option><option>$50k+</option></select><select className="rounded-2xl border p-3"><option>Sort: newest</option><option>Budget high to low</option><option>Most bids</option></select></div></Card>
+      <div className="grid gap-6 lg:grid-cols-3">{filtered.map((project) => <ProjectCard key={project.id} project={project} user={user} profile={profile} onMessage={onMessage} setModal={setModal} />)}</div>
+    </section>
+  );
+}
+
+function ProjectCard({ project, user, profile, onMessage, setModal }) {
+  const isVerified = Boolean(profile?.is_verified);
+  function bidNow() { if (!user) return onMessage("Please log in to bid."); if (!isVerified) return setModal("verification"); setModal("bid"); }
+  return <Card className="overflow-hidden"><div className="h-44 bg-[url('https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=900&q=80')] bg-cover bg-center" /><div className="p-6"><div className="flex justify-between gap-3"><Badge tone={project.featured ? "amber" : "slate"}>{project.featured ? "Featured" : project.category}</Badge><span className="text-sm text-slate-500">{project.posted}</span></div><h3 className="mt-4 text-xl font-black">{project.title}</h3><p className="mt-2 text-slate-600">{project.description}</p><div className="mt-4 grid gap-2 text-sm text-slate-600"><p>📍 {project.location}</p><p>💵 {project.budget}</p><p>⏱ {project.timeline}</p><p>⭐ Owner rating {project.rating}</p></div><div className="mt-5 flex gap-3"><Button onClick={bidNow}>Bid Now</Button><Button variant="secondary" onClick={() => setModal("projectDetail")}>Details</Button></div></div></Card>;
+}
+
+function OwnerDashboard({ setModal }) {
+  return <section className="mx-auto max-w-7xl px-6 py-10"><SectionTitle eyebrow="Owner dashboard" title="Manage your projects" description="Track projects, contractor responses, ads, lead unlocks, and analytics." /><div className="grid gap-6 lg:grid-cols-[1fr_360px]"><div className="space-y-6"><ProjectManagement /><MessagesPreview /><AnalyticsCards /></div><div className="space-y-6"><LeadStatus /><AdManagement setModal={setModal} /></div></div></section>;
+}
+function ProjectManagement() { return <Card className="p-6"><h3 className="text-xl font-black">My projects</h3><div className="mt-4 space-y-3">{sampleProjects.slice(0,2).map((p) => <MiniProject key={p.id} project={p} />)}</div></Card>; }
+function MessagesPreview() { return <Card className="p-6"><h3 className="text-xl font-black">Messages</h3><p className="mt-2 text-slate-600">Lead contact is protected until unlock is complete.</p></Card>; }
+function AnalyticsCards() { return <div className="grid gap-4 md:grid-cols-3">{["Views", "Bids", "Shortlisted"].map((x,i) => <Card key={x} className="p-5"><p className="text-sm text-slate-500">{x}</p><p className="text-3xl font-black">{[184,14,3][i]}</p></Card>)}</div>; }
+function LeadStatus() { return <Card className="p-6"><h3 className="text-xl font-black">Lead unlock status</h3><p className="mt-2 text-slate-600">Owner unlock: pending. Contractor unlock: pending.</p></Card>; }
+function AdManagement({ setModal }) { return <Card className="p-6"><h3 className="text-xl font-black">Ads purchased</h3><p className="mt-2 text-slate-600">No active ads yet.</p><Button className="mt-4" onClick={() => setModal("ad")}>Create Ad</Button></Card>; }
+
+function MessagingPage({ setModal }) {
+  return <section className="mx-auto max-w-6xl px-6 py-10"><SectionTitle eyebrow="Messaging" title="Secure project conversations" description="Chat, file upload, read receipts, and lead-gated contact exchange." /><Card className="overflow-hidden"><div className="grid min-h-[600px] lg:grid-cols-[320px_1fr]"><div className="border-r bg-slate-50 p-5"><h3 className="font-black">Chats</h3>{["Luxury basement", "Framing package"].map((x) => <div key={x} className="mt-3 rounded-2xl bg-white p-3 shadow-sm">{x}</div>)}</div><div className="flex flex-col"><div className="border-b p-5"><h3 className="font-black">Luxury basement renovation</h3><p className="text-sm text-slate-500">Lead details locked until both sides unlock.</p></div><div className="flex-1 space-y-4 p-5"><div className="max-w-md rounded-3xl bg-slate-100 p-4">Can you confirm your availability next week?</div><div className="ml-auto max-w-md rounded-3xl bg-slate-950 p-4 text-white">Yes, I can review the project scope.</div><div className="rounded-3xl border border-amber-200 bg-amber-50 p-4"><p className="font-bold text-amber-800">Contact details locked</p><p className="mt-1 text-sm text-amber-700">Unlock lead to exchange phone, email, documents, and contracts.</p><Button onClick={() => setModal("lead")} className="mt-3 bg-amber-600 hover:bg-amber-700">Unlock Lead</Button></div></div><div className="border-t p-5"><div className="flex gap-3"><input className="flex-1 rounded-2xl border p-3" placeholder="Type message..." /><Button>Send</Button></div><p className="mt-2 text-xs text-slate-500">Typing indicator • Read receipts • File upload placeholder</p></div></div></div></Card></section>;
+}
+
+function AdminDashboard() {
+  const rows = ["User management", "Contractor tier management", "Featured listing approvals", "Ads moderation", "Payment logs", "Project moderation"];
+  return <section className="mx-auto max-w-7xl px-6 py-10"><SectionTitle eyebrow="Admin" title="Platform control center" description="Moderate users, projects, ads, payments, and contractor tiers." /><div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">{rows.map((r) => <Card key={r} className="p-6"><h3 className="text-xl font-black">{r}</h3><p className="mt-2 text-slate-600">Review, approve, suspend, or update records.</p><Button variant="secondary" className="mt-4">Open</Button></Card>)}</div></section>;
+}
+
+function SectionTitle({ eyebrow, title, description }) { return <div className="mb-6"><p className="text-sm uppercase tracking-[0.25em] text-slate-500">{eyebrow}</p><h2 className="mt-2 text-4xl font-black text-slate-950">{title}</h2>{description ? <p className="mt-2 max-w-3xl text-slate-600">{description}</p> : null}</div>; }
+
+function AppModal({ modal, setModal, user }) {
+  if (!modal) return null;
+  if (modal === "upgrade") return <Modal title="Upgrade contractor plan" onClose={() => setModal(null)}><PricingGrid user={user} profile={{ contractor_tier: "free" }} onMessage={() => {}} /></Modal>;
+  if (modal === "verification") return <Modal title="Human verification required" onClose={() => setModal(null)}><p className="text-slate-600">Complete one-time verification to access full marketplace features.</p><Button onClick={() => user && startCheckout(CONFIG.verification.paymentType, { userId: user.id })} className="mt-5 bg-emerald-600 hover:bg-emerald-700">Verify Account</Button></Modal>;
+  if (modal === "lead") return <Modal title="Unlock lead exchange" onClose={() => setModal(null)}><LeadUnlockCheckout user={user} /></Modal>;
+  if (modal === "featured") return <Modal title="Featured listing purchase" onClose={() => setModal(null)}><FeaturedListingCheckout user={user} /></Modal>;
+  if (modal === "ad") return <Modal title="Create advertisement" onClose={() => setModal(null)}><AdCreationForm user={user} /></Modal>;
+  if (modal === "bid") return <Modal title="Bid submitted preview" onClose={() => setModal(null)}><p className="text-slate-600">In the connected version, this opens the bid form for the selected project.</p></Modal>;
+  if (modal === "projectDetail") return <Modal title="Project details" onClose={() => setModal(null)}><ProjectDetailPreview setModal={setModal} /></Modal>;
+  return null;
+}
+function LeadUnlockCheckout({ user }) { return <div className="grid gap-4 md:grid-cols-2">{Object.values(CONFIG.leadUnlock).map((x) => <Card key={x.paymentType} className="p-5"><h4 className="font-black">{x.label}</h4><p className="mt-2 text-3xl font-black">{x.price}</p><Button className="mt-4" onClick={() => user && startCheckout(x.paymentType, { userId: user.id })}>Pay unlock</Button></Card>)}</div>; }
+function FeaturedListingCheckout({ user }) { return <div className="grid gap-4">{CONFIG.featuredListings.map((x) => <Card key={x.key} className="p-5"><h4 className="font-black">{x.label}</h4><p className="text-slate-600">Appear first in search, homepage, and selected categories.</p><Button className="mt-4" onClick={() => user && startCheckout(x.paymentType, { userId: user.id })}>Purchase</Button></Card>)}</div>; }
+function AdCreationForm({ user }) { return <form className="grid gap-4"><input className="rounded-2xl border p-3" placeholder="Ad title" /><textarea className="rounded-2xl border p-3" placeholder="Description" /><input className="rounded-2xl border p-3" placeholder="Target city/category" /><div className="rounded-2xl border border-dashed p-6 text-center text-slate-500">Image upload placeholder</div><div className="grid gap-3 md:grid-cols-3">{CONFIG.ads.map((x) => <Button key={x.key} onClick={() => user && startCheckout(x.paymentType, { userId: user.id })}>{x.label}</Button>)}</div></form>; }
+function ProjectDetailPreview({ setModal }) { return <div><p className="text-slate-600">Full project description, owner preview, similar projects, and gated contact exchange.</p><Button className="mt-5" onClick={() => setModal("lead")}>Unlock Lead</Button></div>; }
+
+export default function App() {
+  const [view, setView] = useState("Home");
+  const [modal, setModal] = useState(null);
+  const [message, setMessage] = useState("");
+  const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState({ contractor_tier: "free", is_verified: false });
+
+  useEffect(() => {
+    async function loadUser() {
+      const { data } = await supabase.auth.getUser();
+      const currentUser = data?.user || null;
+      setUser(currentUser);
+      if (currentUser) {
+        const { data: profileData } = await supabase.from("profiles").select("*").eq("id", currentUser.id).maybeSingle();
+        if (profileData) setProfile(profileData);
+      }
+    }
+    loadUser();
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => setUser(session?.user || null));
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  async function logout() {
+    await supabase.auth.signOut();
+    setUser(null);
+    setView("Home");
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-100">
+      <Header user={user} onLogout={logout} view={view} setView={setView} />
+      {message ? <div className="mx-auto mt-6 max-w-7xl rounded-3xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">{message}</div> : null}
+      {view === "Home" && <HomePage setView={setView} />}
+      {view === "Onboarding" && <OnboardingFlow user={user} onMessage={setMessage} />}
+      {view === "Projects" && <ProjectsPage user={user} profile={profile} onMessage={setMessage} setModal={setModal} />}
+      {view === "Contractor" && <ContractorDashboard user={user} profile={profile} setModal={setModal} onMessage={setMessage} />}
+      {view === "Owner" && <OwnerDashboard setModal={setModal} />}
+      {view === "Messages" && <MessagingPage setModal={setModal} />}
+      {view === "Admin" && <AdminDashboard />}
+      <AppModal modal={modal} setModal={setModal} user={user} />
+    </div>
+  );
+}
