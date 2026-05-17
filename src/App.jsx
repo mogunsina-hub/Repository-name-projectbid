@@ -617,10 +617,56 @@ function LeadStatus() { return <Card className="p-6"><h3 className="text-xl font
 function AdManagement({ setModal }) { return <Card className="p-6"><h3 className="text-xl font-black">Ads purchased</h3><p className="mt-2 text-slate-600">No active ads yet.</p><Button className="mt-4" onClick={() => setModal("ad")}>Create Ad</Button></Card>; }
 
 function ContractorDashboard({ user, profile, setModal, onMessage }) {
+  const [contractorUnlocks, setContractorUnlocks] = useState([]);
   const tier = CONFIG.contractorTiers.find((t) => t.key === (profile?.contractor_tier || "free")) || CONFIG.contractorTiers[0];
-  return <section className="mx-auto max-w-7xl px-6 py-10"><SectionTitle eyebrow="Contractor dashboard" title="Your professional workspace" description="Track profile strength, bids, notifications, recommended projects, and visibility tools." /><div className="mb-6"><VerificationCard user={user} profile={profile} onMessage={onMessage} /></div><div className="grid gap-6 lg:grid-cols-[1fr_360px]"><div className="space-y-6"><Card className="p-6"><Badge tone="green">{tier.badge}</Badge><h3 className="mt-3 text-2xl font-black">Current tier: {tier.name}</h3><p className="mt-2 text-slate-600">{tier.bidLimit === Infinity ? "Unlimited bids available" : `${tier.bidLimit} bids per month on Free tier`}</p><Button onClick={() => setModal("upgrade")} className="mt-5">Upgrade</Button></Card><Card className="p-6"><h3 className="text-xl font-black">Profile completeness</h3><div className="mt-4"><Progress value={72} /></div></Card><ProjectRecommendations projects={demoProjects} /></div><div className="space-y-6"><NotificationsPanel /><EarningsPanel /><Button className="w-full" onClick={() => setModal("featured")}>Buy featured listing</Button></div></div><PricingGrid user={user} profile={profile} onMessage={onMessage} /></section>;
+
+  useEffect(() => {
+    if (user?.email) fetchContractorUnlocks();
+  }, [user?.email]);
+
+  async function fetchContractorUnlocks() {
+    const { data, error } = await supabase
+      .from("lead_unlocks")
+      .select("*")
+      .eq("contractor_email", user.email)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      onMessage(`Could not load contractor lead unlocks: ${error.message}`);
+      return;
+    }
+
+    setContractorUnlocks(data || []);
+  }
+
+  return <section className="mx-auto max-w-7xl px-6 py-10"><SectionTitle eyebrow="Contractor dashboard" title="Your professional workspace" description="Track profile strength, bids, notifications, recommended projects, and visibility tools." /><div className="mb-6"><VerificationCard user={user} profile={profile} onMessage={onMessage} /></div><div className="grid gap-6 lg:grid-cols-[1fr_360px]"><div className="space-y-6"><Card className="p-6"><Badge tone="green">{tier.badge}</Badge><h3 className="mt-3 text-2xl font-black">Current tier: {tier.name}</h3><p className="mt-2 text-slate-600">{tier.bidLimit === Infinity ? "Unlimited bids available" : `${tier.bidLimit} bids per month on Free tier`}</p><Button onClick={() => setModal("upgrade")} className="mt-5">Upgrade</Button></Card><Card className="p-6"><h3 className="text-xl font-black">Profile completeness</h3><div className="mt-4"><Progress value={72} /></div></Card><ProjectRecommendations projects={demoProjects} /><ContractorLeadUnlocks leadUnlocks={contractorUnlocks} onOpenLeadUnlock={(leadUnlock) => setModal({ type: "lead", leadUnlock })} /></div><div className="space-y-6"><NotificationsPanel /><EarningsPanel /><Button className="w-full" onClick={() => setModal("featured")}>Buy featured listing</Button></div></div><PricingGrid user={user} profile={profile} onMessage={onMessage} /></section>;
 }
 function ProjectRecommendations({ projects }) { return <Card className="p-6"><h3 className="text-xl font-black">Recommended projects</h3><div className="mt-4 grid gap-4">{projects.map((p) => <MiniProject key={p.id} project={p} />)}</div></Card>; }
+
+function ContractorLeadUnlocks({ leadUnlocks, onOpenLeadUnlock }) {
+  return (
+    <Card className="p-6">
+      <h3 className="text-xl font-black">Lead unlock requests</h3>
+      <p className="mt-2 text-sm text-slate-600">Pay the contractor unlock only after the owner has accepted your bid and the contract is finalized.</p>
+      <div className="mt-4 space-y-3">
+        {leadUnlocks.length === 0 ? (
+          <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">No lead unlocks yet.</div>
+        ) : (
+          leadUnlocks.map((unlock) => (
+            <div key={unlock.id} className="rounded-2xl bg-slate-50 p-4">
+              <p className="font-bold text-slate-950">Project #{unlock.project_id}</p>
+              <p className="mt-1 text-sm text-slate-600">Owner paid: {unlock.owner_paid ? "Yes" : "No"} • Contractor paid: {unlock.contractor_paid ? "Yes" : "No"}</p>
+              <p className="mt-1 text-sm text-slate-500">Status: {unlock.status}</p>
+              <Button className="mt-3" onClick={() => onOpenLeadUnlock(unlock)}>
+                Open lead unlock
+              </Button>
+            </div>
+          ))
+        )}
+      </div>
+    </Card>
+  );
+}
 function NotificationsPanel() { return <Card className="p-6"><h3 className="text-xl font-black">Notifications</h3><div className="mt-4 space-y-3">{["New project posted nearby", "Owner viewed your profile", "Bid deadline approaching"].map((n) => <div key={n} className="rounded-2xl bg-slate-50 p-3 text-sm">🔔 {n}</div>)}</div></Card>; }
 function EarningsPanel() { return <Card className="p-6"><h3 className="text-xl font-black">Earnings overview</h3><p className="mt-3 text-4xl font-black">$0</p><p className="text-sm text-slate-500">Track future awarded contracts here.</p></Card>; }
 
@@ -735,11 +781,23 @@ function LeadUnlockCheckout({ user, leadUnlock, onMessage }) {
     );
   }
 
+  const isOwner = user?.email === leadUnlock.owner_email;
+  const isContractor = user?.email === leadUnlock.contractor_email;
   const isUnlocked = Boolean(leadUnlock.owner_paid && leadUnlock.contractor_paid);
 
   function payUnlock(role) {
     if (!user) {
       onMessage?.("Please log in before paying lead unlock.");
+      return;
+    }
+
+    if (role === "owner" && !isOwner) {
+      onMessage?.("Only the project owner can pay the owner unlock fee.");
+      return;
+    }
+
+    if (role === "contractor" && !isContractor) {
+      onMessage?.("Only the accepted contractor can pay the contractor unlock fee.");
       return;
     }
 
@@ -760,12 +818,18 @@ function LeadUnlockCheckout({ user, leadUnlock, onMessage }) {
         {isUnlocked ? "Lead exchange is unlocked. Both parties have paid." : "Lead exchange is locked until both owner and contractor have paid."}
       </div>
 
+      <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
+        <p><strong>Owner:</strong> {leadUnlock.owner_email}</p>
+        <p><strong>Contractor:</strong> {leadUnlock.contractor_email}</p>
+      </div>
+
       <div className="grid gap-4 md:grid-cols-2">
         <Card className="p-5">
           <h4 className="font-black">Owner unlock</h4>
           <p className="mt-2 text-3xl font-black">{CONFIG.leadUnlock.owner.price}</p>
           <p className="mt-2 text-sm text-slate-600">Status: {leadUnlock.owner_paid ? "Paid" : "Pending"}</p>
-          <Button disabled={leadUnlock.owner_paid} className="mt-4" onClick={() => payUnlock("owner")}>
+          {!isOwner ? <p className="mt-3 text-sm text-slate-500">Only the project owner can pay this side.</p> : null}
+          <Button disabled={leadUnlock.owner_paid || !isOwner} className="mt-4" onClick={() => payUnlock("owner")}>
             {leadUnlock.owner_paid ? "Owner paid" : "Pay owner unlock"}
           </Button>
         </Card>
@@ -774,7 +838,8 @@ function LeadUnlockCheckout({ user, leadUnlock, onMessage }) {
           <h4 className="font-black">Contractor unlock</h4>
           <p className="mt-2 text-3xl font-black">{CONFIG.leadUnlock.contractor.price}</p>
           <p className="mt-2 text-sm text-slate-600">Status: {leadUnlock.contractor_paid ? "Paid" : "Pending"}</p>
-          <Button disabled={leadUnlock.contractor_paid} className="mt-4" onClick={() => payUnlock("contractor")}>
+          {!isContractor ? <p className="mt-3 text-sm text-slate-500">Only the accepted contractor can pay this side.</p> : null}
+          <Button disabled={leadUnlock.contractor_paid || !isContractor} className="mt-4" onClick={() => payUnlock("contractor")}>
             {leadUnlock.contractor_paid ? "Contractor paid" : "Pay contractor unlock"}
           </Button>
         </Card>
