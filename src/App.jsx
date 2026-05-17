@@ -122,8 +122,18 @@ function AuthPanel({ onMessage }) {
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [role, setRole] = useState("project_owner");
   const [loading, setLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+
+  useEffect(() => {
+    const hash = window.location.hash || "";
+    const search = window.location.search || "";
+    if (hash.includes("type=recovery") || search.includes("type=recovery")) {
+      setMode("recovery");
+    }
+  }, []);
 
   async function handleAuth(event) {
     event.preventDefault();
@@ -146,6 +156,73 @@ function AuthPanel({ onMessage }) {
     setLoading(false);
   }
 
+  async function handlePasswordReset() {
+    if (!email.trim()) {
+      onMessage("Enter your email address first, then click forgot password.");
+      return;
+    }
+
+    setResetLoading(true);
+
+    const redirectTo = window.location.origin;
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo });
+
+    setResetLoading(false);
+
+    if (error) {
+      onMessage(`Password reset error: ${error.message}`);
+      return;
+    }
+
+    onMessage("Password reset email sent. Check your inbox and spam folder.");
+  }
+
+  async function handleUpdatePassword(event) {
+    event.preventDefault();
+
+    if (!newPassword.trim() || newPassword.length < 6) {
+      onMessage("Please enter a new password with at least 6 characters.");
+      return;
+    }
+
+    setLoading(true);
+
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+
+    setLoading(false);
+
+    if (error) {
+      onMessage(`Could not update password: ${error.message}`);
+      return;
+    }
+
+    setNewPassword("");
+    setMode("signin");
+    window.history.replaceState({}, document.title, window.location.pathname);
+    onMessage("Password updated successfully. You can now log in with your new password.");
+  }
+
+  if (mode === "recovery") {
+    return (
+      <Card>
+        <form onSubmit={handleUpdatePassword} className="p-6">
+          <p className="text-sm uppercase tracking-[0.25em] text-slate-500">Password recovery</p>
+          <h3 className="mt-2 text-2xl font-black text-slate-950">Set a new password</h3>
+          <p className="mt-2 text-sm text-slate-500">Enter a new password for your ProjectBid account.</p>
+          <div className="mt-5 grid gap-3">
+            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="New password" />
+            <Button type="submit" disabled={loading} className="bg-emerald-600 hover:bg-emerald-700">
+              {loading ? "Updating..." : "Update password"}
+            </Button>
+            <button type="button" onClick={() => setMode("signin")} className="text-sm font-semibold text-slate-700 hover:text-slate-950">
+              Back to login
+            </button>
+          </div>
+        </form>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <form onSubmit={handleAuth} className="p-6">
@@ -166,6 +243,11 @@ function AuthPanel({ onMessage }) {
           <button type="button" onClick={() => setMode(mode === "signup" ? "signin" : "signup")} className="text-sm font-semibold text-slate-700 hover:text-slate-950">
             {mode === "signup" ? "Already have an account? Log in" : "Need an account? Sign up"}
           </button>
+          {mode === "signin" ? (
+            <button type="button" onClick={handlePasswordReset} disabled={resetLoading} className="text-sm font-semibold text-blue-700 hover:text-blue-900 disabled:opacity-50">
+              {resetLoading ? "Sending reset email..." : "Forgot password?"}
+            </button>
+          ) : null}
         </div>
       </form>
     </Card>
@@ -248,6 +330,93 @@ function VerificationCard({ user, profile, onMessage }) {
       <Button onClick={verifyAccount} disabled={isVerified} className="mt-5 bg-emerald-600 hover:bg-emerald-700">
         {isVerified ? "Verified" : "Verify my account"}
       </Button>
+    </Card>
+  );
+}
+
+function ContactProfileForm({ user, profile, onMessage, onSaved }) {
+  const [form, setForm] = useState({
+    full_name: "",
+    company_name: "",
+    phone: "",
+    city: "",
+    province_state: "",
+    country: ""
+  });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setForm({
+      full_name: profile?.full_name || "",
+      company_name: profile?.company_name || "",
+      phone: profile?.phone || "",
+      city: profile?.city || "",
+      province_state: profile?.province_state || "",
+      country: profile?.country || ""
+    });
+  }, [profile]);
+
+  function updateField(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function saveContactProfile(event) {
+    event.preventDefault();
+
+    if (!user) {
+      onMessage("Please log in before saving contact details.");
+      return;
+    }
+
+    setSaving(true);
+
+    const { error } = await supabase.from("profiles").upsert(
+      {
+        id: user.id,
+        email: user.email,
+        full_name: form.full_name.trim(),
+        company_name: form.company_name.trim(),
+        phone: form.phone.trim(),
+        city: form.city.trim(),
+        province_state: form.province_state.trim(),
+        country: form.country.trim(),
+        contractor_tier: profile?.contractor_tier || "free",
+        is_verified: Boolean(profile?.is_verified),
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: "id" }
+    );
+
+    setSaving(false);
+
+    if (error) {
+      onMessage(`Could not save contact details: ${error.message}`);
+      return;
+    }
+
+    onMessage("Contact details saved successfully.");
+    onSaved?.();
+  }
+
+  return (
+    <Card className="p-6">
+      <h3 className="text-xl font-black text-slate-950">Contact details</h3>
+      <p className="mt-1 text-sm text-slate-500">These details are only shown after lead unlock is fully paid by both parties.</p>
+      <form onSubmit={saveContactProfile} className="mt-5 grid gap-3">
+        <div className="grid gap-3 md:grid-cols-2">
+          <input value={form.full_name} onChange={(e) => updateField("full_name", e.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Full name" />
+          <input value={form.company_name} onChange={(e) => updateField("company_name", e.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Company name, if applicable" />
+        </div>
+        <input value={form.phone} onChange={(e) => updateField("phone", e.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Phone number" />
+        <div className="grid gap-3 md:grid-cols-3">
+          <input value={form.city} onChange={(e) => updateField("city", e.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="City" />
+          <input value={form.province_state} onChange={(e) => updateField("province_state", e.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Province/State" />
+          <input value={form.country} onChange={(e) => updateField("country", e.target.value)} className="rounded-2xl border p-3 outline-none focus:ring-2 focus:ring-slate-900" placeholder="Country" />
+        </div>
+        <Button type="submit" disabled={saving} className="bg-blue-700 hover:bg-blue-800">
+          {saving ? "Saving..." : "Save contact details"}
+        </Button>
+      </form>
     </Card>
   );
 }
@@ -772,6 +941,81 @@ function BidSubmissionForm({ project, user, profile, onMessage, onClose, onBidSa
   );
 }
 
+function ContactExchangePanel({ leadUnlock }) {
+  const [ownerProfile, setOwnerProfile] = useState(null);
+  const [contractorProfile, setContractorProfile] = useState(null);
+  const isUnlocked = Boolean(leadUnlock?.owner_paid && leadUnlock?.contractor_paid) || leadUnlock?.status === "unlocked";
+
+  useEffect(() => {
+    if (isUnlocked && leadUnlock?.owner_email && leadUnlock?.contractor_email) {
+      fetchContactProfiles();
+    }
+  }, [isUnlocked, leadUnlock?.owner_email, leadUnlock?.contractor_email]);
+
+  async function fetchContactProfiles() {
+    const { data } = await supabase
+      .from("profiles")
+      .select("email, full_name, phone, city, province_state, country, company_name")
+      .in("email", [leadUnlock.owner_email, leadUnlock.contractor_email]);
+
+    const profiles = data || [];
+    setOwnerProfile(profiles.find((item) => item.email === leadUnlock.owner_email) || null);
+    setContractorProfile(profiles.find((item) => item.email === leadUnlock.contractor_email) || null);
+  }
+
+  if (!isUnlocked) {
+    return (
+      <Card className="border-amber-100 bg-amber-50 p-5 shadow-none">
+        <h4 className="font-black text-amber-900">Contact details locked</h4>
+        <p className="mt-2 text-sm text-amber-800">
+          Phone numbers, email exchange, documents, and contract files remain locked until both parties have paid their unlock fee.
+        </p>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <div className="rounded-2xl bg-white p-4 text-sm text-slate-700">Owner paid: {leadUnlock?.owner_paid ? "Yes" : "No"}</div>
+          <div className="rounded-2xl bg-white p-4 text-sm text-slate-700">Contractor paid: {leadUnlock?.contractor_paid ? "Yes" : "No"}</div>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="border-emerald-100 bg-emerald-50 p-5 shadow-none">
+      <h4 className="font-black text-emerald-900">Contact and document exchange unlocked</h4>
+      <p className="mt-2 text-sm text-emerald-800">
+        Both parties have paid. You can now exchange direct contact details, documents, and contract files.
+      </p>
+
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <div className="rounded-2xl bg-white p-4">
+          <p className="text-xs uppercase tracking-wide text-slate-400">Project owner</p>
+          <p className="mt-1 font-bold text-slate-950">{ownerProfile?.full_name || leadUnlock.owner_email}</p>
+          {ownerProfile?.company_name ? <p className="mt-1 text-sm text-slate-600">Company: {ownerProfile.company_name}</p> : null}
+          <p className="mt-1 text-sm text-slate-700">Email: {leadUnlock.owner_email}</p>
+          <p className="mt-2 text-sm text-slate-700">Phone: {ownerProfile?.phone || "Not added yet"}</p>
+          <p className="mt-1 text-sm text-slate-500">Location: {[ownerProfile?.city, ownerProfile?.province_state, ownerProfile?.country].filter(Boolean).join(", ") || "Not added yet"}</p>
+        </div>
+        <div className="rounded-2xl bg-white p-4">
+          <p className="text-xs uppercase tracking-wide text-slate-400">Contractor</p>
+          <p className="mt-1 font-bold text-slate-950">{contractorProfile?.full_name || leadUnlock.contractor_email}</p>
+          {contractorProfile?.company_name ? <p className="mt-1 text-sm text-slate-600">Company: {contractorProfile.company_name}</p> : null}
+          <p className="mt-1 text-sm text-slate-700">Email: {leadUnlock.contractor_email}</p>
+          <p className="mt-2 text-sm text-slate-700">Phone: {contractorProfile?.phone || "Not added yet"}</p>
+          <p className="mt-1 text-sm text-slate-500">Location: {[contractorProfile?.city, contractorProfile?.province_state, contractorProfile?.country].filter(Boolean).join(", ") || "Not added yet"}</p>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <div className="rounded-2xl border border-dashed border-emerald-300 bg-white p-5 text-center text-sm text-slate-600">
+          📎 Document upload area placeholder
+        </div>
+        <div className="rounded-2xl border border-dashed border-emerald-300 bg-white p-5 text-center text-sm text-slate-600">
+          📝 Contract exchange area placeholder
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function LeadUnlockCheckout({ user, leadUnlock, onMessage }) {
   if (!leadUnlock) {
     return (
@@ -783,7 +1027,7 @@ function LeadUnlockCheckout({ user, leadUnlock, onMessage }) {
 
   const isOwner = user?.email === leadUnlock.owner_email;
   const isContractor = user?.email === leadUnlock.contractor_email;
-  const isUnlocked = Boolean(leadUnlock.owner_paid && leadUnlock.contractor_paid);
+  const isUnlocked = Boolean(leadUnlock.owner_paid && leadUnlock.contractor_paid) || leadUnlock.status === "unlocked";
 
   function payUnlock(role) {
     if (!user) {
@@ -844,6 +1088,8 @@ function LeadUnlockCheckout({ user, leadUnlock, onMessage }) {
           </Button>
         </Card>
       </div>
+
+      <ContactExchangePanel leadUnlock={leadUnlock} />
     </div>
   );
 }
@@ -917,7 +1163,7 @@ export default function App() {
       {view === "Admin" && <AdminDashboard />}
       {view === "Account" && (
         <section className="mx-auto max-w-3xl px-6 py-10">
-          <SectionTitle eyebrow="Account" title={user ? "Account details" : "Log in or create account"} description="Sign in and complete verification before using protected marketplace features." />
+          <SectionTitle eyebrow="Account" title={user ? "Account details" : "Log in or create account"} description="Sign in, verify your account, and save contact details for unlocked leads." />
           {user ? (
             <div className="space-y-6">
               <Card className="p-6">
@@ -926,21 +1172,8 @@ export default function App() {
                 <Button onClick={logout} className="mt-5">Logout</Button>
               </Card>
               <VerificationCard user={user} profile={profile} onMessage={setMessage} />
+              <ContactProfileForm user={user} profile={profile} onMessage={setMessage} onSaved={() => fetchProfile(user.id)} />
             </div>
-          ) : (
-            <AuthPanel onMessage={setMessage} />
-          )}
-        </section>
-      )}
-      {view === "Account" && (
-        <section className="mx-auto max-w-3xl px-6 py-10">
-          <SectionTitle eyebrow="Account" title={user ? "You are logged in" : "Log in or create account"} description="Sign in before creating projects, bidding, saving profiles, or purchasing marketplace features." />
-          {user ? (
-            <Card className="p-6">
-              <p className="text-sm text-slate-500">Logged in as</p>
-              <p className="mt-1 text-xl font-black text-slate-950">{user.email}</p>
-              <Button onClick={logout} className="mt-5">Logout</Button>
-            </Card>
           ) : (
             <AuthPanel onMessage={setMessage} />
           )}
