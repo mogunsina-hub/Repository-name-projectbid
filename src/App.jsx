@@ -350,7 +350,230 @@ function CreateProjectForm({ user, onMessage }) {
 }
 
 function OwnerDashboard({ user, setModal, onMessage }) {
-  return <section className="mx-auto max-w-7xl px-6 py-10"><SectionTitle eyebrow="Owner dashboard" title="Manage your projects" description="Create projects, track contractor responses, lead unlocks, ads, and analytics." /><div className="grid gap-6 lg:grid-cols-[1fr_360px]"><div className="space-y-6"><CreateProjectForm user={user} onMessage={onMessage} /><ProjectManagement /><MessagesPreview /><AnalyticsCards /></div><div className="space-y-6"><LeadStatus /><AdManagement setModal={setModal} /></div></div></section>;
+  const [ownerProjects, setOwnerProjects] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (user?.email) fetchOwnerProjects();
+  }, [user?.email]);
+
+  async function fetchOwnerProjects() {
+    if (!user?.email) return;
+
+    setLoading(true);
+
+    const { data: projectsData, error: projectsError } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("owner", user.email)
+      .order("created_at", { ascending: false });
+
+    if (projectsError) {
+      setLoading(false);
+      onMessage(`Could not load owner projects: ${projectsError.message}`);
+      return;
+    }
+
+    const projectIds = (projectsData || []).map((project) => project.id);
+
+    let bidsData = [];
+    if (projectIds.length > 0) {
+      const { data, error: bidsError } = await supabase
+        .from("bids")
+        .select("*")
+        .in("project_id", projectIds)
+        .order("created_at", { ascending: false });
+
+      if (bidsError) {
+        setLoading(false);
+        onMessage(`Could not load bids: ${bidsError.message}`);
+        return;
+      }
+
+      bidsData = data || [];
+    }
+
+    const merged = (projectsData || []).map((project) => ({
+      ...project,
+      bids: bidsData.filter((bid) => bid.project_id === project.id)
+    }));
+
+    setOwnerProjects(merged);
+    setLoading(false);
+  }
+
+  async function rejectBid(bid) {
+    const { error } = await supabase
+      .from("bids")
+      .update({ status: "rejected" })
+      .eq("id", bid.id);
+
+    if (error) {
+      onMessage(`Could not reject bid: ${error.message}`);
+      return;
+    }
+
+    onMessage("Bid rejected.");
+    fetchOwnerProjects();
+  }
+
+  async function acceptBid(project, bid) {
+    if (!user) {
+      onMessage("Please log in before accepting a bid.");
+      return;
+    }
+
+    const { error: rejectOthersError } = await supabase
+      .from("bids")
+      .update({ status: "rejected" })
+      .eq("project_id", project.id);
+
+    if (rejectOthersError) {
+      onMessage(`Could not update other bids: ${rejectOthersError.message}`);
+      return;
+    }
+
+    const { error: acceptError } = await supabase
+      .from("bids")
+      .update({ status: "accepted" })
+      .eq("id", bid.id);
+
+    if (acceptError) {
+      onMessage(`Could not accept bid: ${acceptError.message}`);
+      return;
+    }
+
+    const { error: projectError } = await supabase
+      .from("projects")
+      .update({
+        accepted_bid_id: bid.id,
+        accepted_contractor_email: bid.contractor_email,
+        status: "Bid Accepted"
+      })
+      .eq("id", project.id);
+
+    if (projectError) {
+      onMessage(`Could not update project: ${projectError.message}`);
+      return;
+    }
+
+    const { data: contractData, error: contractError } = await supabase
+      .from("contracts")
+      .insert([
+        {
+          project_id: project.id,
+          bid_id: bid.id,
+          owner_email: user.email,
+          contractor_email: bid.contractor_email,
+          status: "pending_payment"
+        }
+      ])
+      .select()
+      .single();
+
+    if (contractError) {
+      onMessage(`Bid accepted, but contract was not created: ${contractError.message}`);
+      return;
+    }
+
+    onMessage("Bid accepted. Starting finalization payment.");
+    await fetchOwnerProjects();
+    startCheckout("finalization", { contractId: contractData.id, userId: user.id });
+  }
+
+  return (
+    <section className="mx-auto max-w-7xl px-6 py-10">
+      <SectionTitle eyebrow="Owner dashboard" title="Manage your projects" description="Create projects, review contractor bids, accept or reject bids, and finalize contracts." />
+      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+        <div className="space-y-6">
+          <CreateProjectForm user={user} onMessage={onMessage} />
+          <OwnerBidManagement
+            projects={ownerProjects}
+            loading={loading}
+            onAcceptBid={acceptBid}
+            onRejectBid={rejectBid}
+            onRefresh={fetchOwnerProjects}
+          />
+          <MessagesPreview />
+          <AnalyticsCards />
+        </div>
+        <div className="space-y-6">
+          <LeadStatus />
+          <AdManagement setModal={setModal} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function OwnerBidManagement({ projects, loading, onAcceptBid, onRejectBid, onRefresh }) {
+  return (
+    <Card className="p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-xl font-black text-slate-950">My projects and bids</h3>
+          <p className="mt-1 text-sm text-slate-500">Review contractor responses and move accepted bids into contract finalization.</p>
+        </div>
+        <Button variant="secondary" onClick={onRefresh}>Refresh</Button>
+      </div>
+
+      {loading ? <div className="mt-5 rounded-2xl bg-slate-50 p-4 text-slate-600">Loading your projects...</div> : null}
+
+      {!loading && projects.length === 0 ? (
+        <div className="mt-5 rounded-2xl bg-slate-50 p-4 text-slate-600">No projects yet. Create your first project above.</div>
+      ) : null}
+
+      <div className="mt-5 space-y-5">
+        {projects.map((project) => (
+          <div key={project.id} className="rounded-3xl border bg-slate-50 p-5">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <h4 className="text-lg font-black text-slate-950">{project.title}</h4>
+                <p className="mt-1 text-sm text-slate-600">{project.location} • {project.budget}</p>
+                <p className="mt-1 text-sm text-slate-500">Status: {project.status || "Open"}</p>
+              </div>
+              <Badge tone={project.status === "Finalized" ? "green" : project.status === "Bid Accepted" ? "blue" : "slate"}>{project.status || "Open"}</Badge>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {(project.bids || []).length === 0 ? (
+                <div className="rounded-2xl bg-white p-4 text-sm text-slate-500">No bids yet.</div>
+              ) : (
+                project.bids.map((bid) => (
+                  <div key={bid.id} className="rounded-2xl bg-white p-4 shadow-sm">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <p className="font-bold text-slate-950">{bid.company_name || bid.contractor_email}</p>
+                        <p className="mt-1 text-sm text-slate-600">Bid: {bid.bid_amount} • Timeline: {bid.timeline}</p>
+                        {bid.proposal ? <p className="mt-2 text-sm text-slate-600">{bid.proposal}</p> : null}
+                        <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Status: {bid.status}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => onAcceptBid(project, bid)}
+                          disabled={bid.status === "accepted" || project.status === "Finalized"}
+                          className="bg-emerald-600 hover:bg-emerald-700"
+                        >
+                          Accept
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={() => onRejectBid(bid)}
+                          disabled={bid.status === "rejected" || bid.status === "accepted" || project.status === "Finalized"}
+                        >
+                          Reject
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
 }
 
 function ProjectManagement() { return <Card className="p-6"><h3 className="text-xl font-black">My projects</h3><div className="mt-4 space-y-3">{demoProjects.map((p) => <MiniProject key={p.id} project={p} />)}</div></Card>; }
@@ -368,7 +591,7 @@ function ProjectRecommendations({ projects }) { return <Card className="p-6"><h3
 function NotificationsPanel() { return <Card className="p-6"><h3 className="text-xl font-black">Notifications</h3><div className="mt-4 space-y-3">{["New project posted nearby", "Owner viewed your profile", "Bid deadline approaching"].map((n) => <div key={n} className="rounded-2xl bg-slate-50 p-3 text-sm">🔔 {n}</div>)}</div></Card>; }
 function EarningsPanel() { return <Card className="p-6"><h3 className="text-xl font-black">Earnings overview</h3><p className="mt-3 text-4xl font-black">$0</p><p className="text-sm text-slate-500">Track future awarded contracts here.</p></Card>; }
 
-function MessagingPage({ setModal }) { return <section className="mx-auto max-w-6xl px-6 py-10"><SectionTitle eyebrow="Messaging" title="Secure project conversations" description="Chat, file upload, read receipts, and lead-gated contact exchange." /><Card className="p-6"><p className="text-slate-600">Contact details are gated until lead unlock is complete.</p><Button onClick={() => setModal("lead")} className="mt-5">Unlock Lead</Button></Card></section>; }
+function MessagingPage() { return <section className="mx-auto max-w-6xl px-6 py-10"><SectionTitle eyebrow="Messaging" title="Secure project conversations" description="Chat, file upload, read receipts, and project communication." /><Card className="p-6"><p className="text-slate-600">Messages will appear here after a project owner and contractor begin a conversation. Contact details and documents remain protected until the project reaches the proper unlock stage.</p></Card></section>; }
 function AdminDashboard() { return <section className="mx-auto max-w-7xl px-6 py-10"><SectionTitle eyebrow="Admin" title="Platform control center" description="Moderate users, projects, ads, payments, and contractor tiers." /><div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">{["User management", "Tier management", "Ads moderation", "Payment logs", "Project moderation", "Approvals"].map((r) => <Card key={r} className="p-6"><h3 className="text-xl font-black">{r}</h3><Button variant="secondary" className="mt-4">Open</Button></Card>)}</div></section>; }
 
 function BidSubmissionForm({ project, user, profile, onMessage, onClose, onBidSaved }) {
