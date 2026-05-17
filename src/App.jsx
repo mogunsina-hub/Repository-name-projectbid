@@ -352,6 +352,7 @@ function CreateProjectForm({ user, onMessage }) {
 function OwnerDashboard({ user, setModal, onMessage }) {
   const [ownerProjects, setOwnerProjects] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [leadUnlocks, setLeadUnlocks] = useState([]);
 
   useEffect(() => {
     if (user?.email) fetchOwnerProjects();
@@ -391,6 +392,13 @@ function OwnerDashboard({ user, setModal, onMessage }) {
       }
 
       bidsData = data || [];
+
+      const { data: unlockData } = await supabase
+        .from("lead_unlocks")
+        .select("*")
+        .in("project_id", projectIds);
+
+      setLeadUnlocks(unlockData || []);
     }
 
     const merged = (projectsData || []).map((project) => ({
@@ -476,6 +484,19 @@ function OwnerDashboard({ user, setModal, onMessage }) {
       return;
     }
 
+    await supabase
+      .from("lead_unlocks")
+      .insert([
+        {
+          project_id: project.id,
+          bid_id: bid.id,
+          contract_id: contractData.id,
+          owner_email: user.email,
+          contractor_email: bid.contractor_email,
+          status: "locked"
+        }
+      ]);
+
     onMessage("Bid accepted. Starting finalization payment.");
     await fetchOwnerProjects();
     startCheckout("finalization", { contractId: contractData.id, userId: user.id });
@@ -490,8 +511,10 @@ function OwnerDashboard({ user, setModal, onMessage }) {
           <OwnerBidManagement
             projects={ownerProjects}
             loading={loading}
+            leadUnlocks={leadUnlocks}
             onAcceptBid={acceptBid}
             onRejectBid={rejectBid}
+            onOpenLeadUnlock={(leadUnlock) => setModal({ type: "lead", leadUnlock })}
             onRefresh={fetchOwnerProjects}
           />
           <MessagesPreview />
@@ -506,7 +529,7 @@ function OwnerDashboard({ user, setModal, onMessage }) {
   );
 }
 
-function OwnerBidManagement({ projects, loading, onAcceptBid, onRejectBid, onRefresh }) {
+function OwnerBidManagement({ projects, loading, leadUnlocks, onAcceptBid, onRejectBid, onOpenLeadUnlock, onRefresh }) {
   return (
     <Card className="p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -532,7 +555,17 @@ function OwnerBidManagement({ projects, loading, onAcceptBid, onRejectBid, onRef
                 <p className="mt-1 text-sm text-slate-600">{project.location} • {project.budget}</p>
                 <p className="mt-1 text-sm text-slate-500">Status: {project.status || "Open"}</p>
               </div>
-              <Badge tone={project.status === "Finalized" ? "green" : project.status === "Bid Accepted" ? "blue" : "slate"}>{project.status || "Open"}</Badge>
+              <div className="flex flex-col gap-2 md:items-end">
+                <Badge tone={project.status === "Finalized" ? "green" : project.status === "Bid Accepted" ? "blue" : "slate"}>{project.status || "Open"}</Badge>
+                {project.status === "Finalized" ? (() => {
+                  const unlock = (leadUnlocks || []).find((item) => item.project_id === project.id);
+                  return unlock ? (
+                    <Button variant="secondary" onClick={() => onOpenLeadUnlock(unlock)}>
+                      {unlock.owner_paid && unlock.contractor_paid ? "Lead Unlocked" : "Unlock Lead"}
+                    </Button>
+                  ) : null;
+                })() : null}
+              </div>
             </div>
 
             <div className="mt-4 space-y-3">
@@ -693,7 +726,62 @@ function BidSubmissionForm({ project, user, profile, onMessage, onClose, onBidSa
   );
 }
 
-function LeadUnlockCheckout({ user }) { return <div className="grid gap-4 md:grid-cols-2">{Object.values(CONFIG.leadUnlock).map((x) => <Card key={x.paymentType} className="p-5"><h4 className="font-black">{x.label}</h4><p className="mt-2 text-3xl font-black">{x.price}</p><Button className="mt-4" onClick={() => user && startCheckout(x.paymentType, { userId: user.id })}>Pay unlock</Button></Card>)}</div>; }
+function LeadUnlockCheckout({ user, leadUnlock, onMessage }) {
+  if (!leadUnlock) {
+    return (
+      <div className="rounded-2xl bg-slate-50 p-5 text-slate-600">
+        Select a finalized contract before unlocking contact exchange.
+      </div>
+    );
+  }
+
+  const isUnlocked = Boolean(leadUnlock.owner_paid && leadUnlock.contractor_paid);
+
+  function payUnlock(role) {
+    if (!user) {
+      onMessage?.("Please log in before paying lead unlock.");
+      return;
+    }
+
+    const config = role === "contractor" ? CONFIG.leadUnlock.contractor : CONFIG.leadUnlock.owner;
+
+    startCheckout(config.paymentType, {
+      userId: user.id,
+      leadUnlockId: leadUnlock.id,
+      leadRole: role,
+      projectId: leadUnlock.project_id,
+      contractId: leadUnlock.contract_id
+    });
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className={`rounded-2xl p-4 ${isUnlocked ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`}>
+        {isUnlocked ? "Lead exchange is unlocked. Both parties have paid." : "Lead exchange is locked until both owner and contractor have paid."}
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card className="p-5">
+          <h4 className="font-black">Owner unlock</h4>
+          <p className="mt-2 text-3xl font-black">{CONFIG.leadUnlock.owner.price}</p>
+          <p className="mt-2 text-sm text-slate-600">Status: {leadUnlock.owner_paid ? "Paid" : "Pending"}</p>
+          <Button disabled={leadUnlock.owner_paid} className="mt-4" onClick={() => payUnlock("owner")}>
+            {leadUnlock.owner_paid ? "Owner paid" : "Pay owner unlock"}
+          </Button>
+        </Card>
+
+        <Card className="p-5">
+          <h4 className="font-black">Contractor unlock</h4>
+          <p className="mt-2 text-3xl font-black">{CONFIG.leadUnlock.contractor.price}</p>
+          <p className="mt-2 text-sm text-slate-600">Status: {leadUnlock.contractor_paid ? "Paid" : "Pending"}</p>
+          <Button disabled={leadUnlock.contractor_paid} className="mt-4" onClick={() => payUnlock("contractor")}>
+            {leadUnlock.contractor_paid ? "Contractor paid" : "Pay contractor unlock"}
+          </Button>
+        </Card>
+      </div>
+    </div>
+  );
+}
 function FeaturedListingCheckout({ user }) { return <div className="grid gap-4">{CONFIG.featuredListings.map((x) => <Card key={x.key} className="p-5"><h4 className="font-black">{x.label}</h4><p className="text-slate-600">Appear first in search, homepage, and selected categories.</p><Button className="mt-4" onClick={() => user && startCheckout(x.paymentType, { userId: user.id })}>Purchase</Button></Card>)}</div>; }
 function AdCreationForm({ user }) { return <form className="grid gap-4"><input className="rounded-2xl border p-3" placeholder="Ad title" /><textarea className="rounded-2xl border p-3" placeholder="Description" /><input className="rounded-2xl border p-3" placeholder="Target city/category" /><div className="rounded-2xl border border-dashed p-6 text-center text-slate-500">Image upload placeholder</div><div className="grid gap-3 md:grid-cols-3">{CONFIG.ads.map((x) => <Button key={x.key} onClick={() => user && startCheckout(x.paymentType, { userId: user.id })}>{x.label}</Button>)}</div></form>; }
 function ProjectDetailPreview({ setModal }) { return <div><p className="text-slate-600">Full project description, owner preview, similar projects, and gated contact exchange.</p><Button className="mt-5" onClick={() => setModal("lead")}>Unlock Lead</Button></div>; }
@@ -703,10 +791,11 @@ function AppModal({ modal, setModal, user, profile, onMessage, onBidSaved }) {
 
   const modalType = typeof modal === "string" ? modal : modal.type;
   const modalProject = typeof modal === "object" ? modal.project : null;
+  const modalLeadUnlock = typeof modal === "object" ? modal.leadUnlock : null;
 
   if (modalType === "upgrade") return <Modal title="Upgrade contractor plan" onClose={() => setModal(null)}><PricingGrid user={user} profile={profile} onMessage={onMessage} /></Modal>;
   if (modalType === "verification") return <Modal title="Human verification required" onClose={() => setModal(null)}><p className="text-slate-600">Complete one-time verification to access full marketplace features.</p><Button onClick={() => user && startCheckout(CONFIG.verification.paymentType, { userId: user.id })} className="mt-5 bg-emerald-600 hover:bg-emerald-700">Verify Account</Button></Modal>;
-  if (modalType === "lead") return <Modal title="Unlock lead exchange" onClose={() => setModal(null)}><LeadUnlockCheckout user={user} /></Modal>;
+  if (modalType === "lead") return <Modal title="Unlock lead exchange" onClose={() => setModal(null)}><LeadUnlockCheckout user={user} leadUnlock={modalLeadUnlock} onMessage={onMessage} /></Modal>;
   if (modalType === "featured") return <Modal title="Featured listing purchase" onClose={() => setModal(null)}><FeaturedListingCheckout user={user} /></Modal>;
   if (modalType === "ad") return <Modal title="Create advertisement" onClose={() => setModal(null)}><AdCreationForm user={user} /></Modal>;
   if (modalType === "bid") return <Modal title="Submit bid" onClose={() => setModal(null)}><BidSubmissionForm project={modalProject} user={user} profile={profile} onMessage={onMessage} onClose={() => setModal(null)} onBidSaved={onBidSaved} /></Modal>;
