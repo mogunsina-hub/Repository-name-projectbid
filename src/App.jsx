@@ -128,12 +128,32 @@ function AuthPanel({ onMessage }) {
   const [resetLoading, setResetLoading] = useState(false);
 
   useEffect(() => {
-    const hash = window.location.hash || "";
-    const search = window.location.search || "";
-    if (hash.includes("type=recovery") || search.includes("type=recovery")) {
-      setMode("recovery");
+    async function handleRecoveryLink() {
+      const hash = window.location.hash || "";
+      const searchParams = new URLSearchParams(window.location.search || "");
+      const code = searchParams.get("code");
+      const type = searchParams.get("type");
+
+      if (hash.includes("type=recovery") || type === "recovery") {
+        setMode("recovery");
+        return;
+      }
+
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+
+        if (error) {
+          onMessage(`Password reset link error: ${error.message}`);
+          return;
+        }
+
+        setMode("recovery");
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
     }
-  }, []);
+
+    handleRecoveryLink();
+  }, [onMessage]);
 
   async function handleAuth(event) {
     event.preventDefault();
@@ -164,7 +184,7 @@ function AuthPanel({ onMessage }) {
 
     setResetLoading(true);
 
-    const redirectTo = window.location.origin;
+    const redirectTo = `${window.location.origin}/?type=recovery`;
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo });
 
     setResetLoading(false);
