@@ -2,7 +2,6 @@ import Stripe from "stripe";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Central server-side Stripe pricing config.
 // Amounts are in cents.
 const PAYMENT_CONFIG = {
   human_verification: {
@@ -92,6 +91,12 @@ export default async function handler(request, response) {
     return response.status(405).json({ error: "Method not allowed" });
   }
 
+  if (!process.env.STRIPE_SECRET_KEY) {
+    return response.status(500).json({
+      error: "Missing STRIPE_SECRET_KEY environment variable.",
+    });
+  }
+
   try {
     const {
       paymentType,
@@ -102,7 +107,7 @@ export default async function handler(request, response) {
       projectId,
       city,
       category,
-    } = request.body;
+    } = request.body || {};
 
     const config = PAYMENT_CONFIG[paymentType];
 
@@ -126,6 +131,12 @@ export default async function handler(request, response) {
       };
     }
 
+    const origin =
+      request.headers.origin ||
+      process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : "http://localhost:5173";
+
     const session = await stripe.checkout.sessions.create({
       mode: config.mode,
       payment_method_types: ["card"],
@@ -145,8 +156,8 @@ export default async function handler(request, response) {
           quantity: 1,
         },
       ],
-      success_url: `${request.headers.origin}/?payment=success&type=${paymentType}`,
-      cancel_url: `${request.headers.origin}/?payment=cancelled&type=${paymentType}`,
+      success_url: `${origin}/?payment=success&type=${paymentType}`,
+      cancel_url: `${origin}/?payment=cancelled&type=${paymentType}`,
     });
 
     return response.status(200).json({
